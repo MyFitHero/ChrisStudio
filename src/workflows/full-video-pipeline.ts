@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { ScriptGenerator, EnhancedVideoScript } from '../services/script-generator.js';
 import { VoiceGeneratorFactory } from '../services/voice-generator-factory.js';
 import { AssetCollector } from '../services/asset-collector.js';
+import { AiVisualCollector, resolveVisualSource } from '../services/ai-visual-collector.js';
 import { AssetDownloader } from '../services/asset-downloader.js';
 import { VideoComposer, ComposeOptions } from '../services/video-composer.js';
 import { Channel, VisualRequest, VideoScript } from '../types/index.js';
@@ -16,6 +17,7 @@ export class FullVideoPipeline {
   private scriptGenerator: ScriptGenerator;
   private voiceGeneratorFactory: VoiceGeneratorFactory;
   private assetCollector: AssetCollector;
+  private aiVisualCollector: AiVisualCollector;
   private assetDownloader: AssetDownloader;
   private videoComposer: VideoComposer;
 
@@ -23,6 +25,7 @@ export class FullVideoPipeline {
     this.scriptGenerator = new ScriptGenerator();
     this.voiceGeneratorFactory = new VoiceGeneratorFactory();
     this.assetCollector = new AssetCollector();
+    this.aiVisualCollector = new AiVisualCollector(undefined, undefined, this.assetCollector);
     this.assetDownloader = new AssetDownloader();
     this.videoComposer = new VideoComposer();
   }
@@ -89,15 +92,22 @@ export class FullVideoPipeline {
       );
 
       // Step 3: Collect Assets
-      console.log('🎨 STEP 3/5: Collecting visual assets from Pexels...\n');
-      const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration);
+      const visualSource = resolveVisualSource();
+      console.log(`🎨 STEP 3/5: Collecting visual assets (${visualSource === 'ai' ? 'AI images via fal.ai' : 'Pexels'})...\n`);
+      const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration, {
+        forceImagesOnly: visualSource === 'ai'
+      });
       const avgBeat = requests.length > 0 ? (audioDuration / requests.length) : 0;
       console.log(`   🎞️ Beats: ${requests.length} (avg ${(avgBeat || 0).toFixed(2)}s/shot)`);
-      const assets = await this.assetCollector.collectAssetsForTimeline(requests);
+      const assets = await this.collectVisuals(channel, topic, requests);
       console.log(`   Images: ${assets.filter(a => a.type === 'image').length}`);
       console.log(`   Videos: ${assets.filter(a => a.type === 'video').length}\n`);
       const fromLibrary = assets.filter(a => a.source === 'library' && a.localPath).length;
       const fromPexels = assets.filter(a => a.source === 'pexels').length;
+      const fromAi = assets.filter(a => a.source === 'ai').length;
+      if (fromAi > 0) {
+        console.log(`   🤖 AI images: ${fromAi}`);
+      }
       if (fromLibrary > 0) {
         console.log(`   ♻️  Assets from library: ${fromLibrary}`);
       }
@@ -193,10 +203,10 @@ export class FullVideoPipeline {
 
     console.log('🎨 REGEN: Collecting visual assets...');
     const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration, {
-      forceImagesOnly: !!options.forceImagesOnly,
+      forceImagesOnly: !!options.forceImagesOnly || resolveVisualSource() === 'ai',
       minClipsRequested: options.minClipsRequested
     });
-    const assets = await this.assetCollector.collectAssetsForTimeline(requests);
+    const assets = await this.collectVisuals(channel, topic, requests);
 
     await this.updateProjectManifest(metaPath, (curr) => ({
       ...curr,
@@ -367,6 +377,14 @@ export class FullVideoPipeline {
     return value;
   }
 
+  /** AI images when VISUAL_SOURCE resolves to "ai" (FAL_KEY set), Pexels/local library otherwise. */
+  private async collectVisuals(channel: Channel, topic: string, requests: VisualRequest[]) {
+    if (resolveVisualSource() === 'ai') {
+      return this.aiVisualCollector.collect(channel, topic, requests);
+    }
+    return this.assetCollector.collectAssetsForTimeline(requests);
+  }
+
   private buildVisualTimelineRequests(
     channel: Channel,
     topic: string,
@@ -528,11 +546,20 @@ export class FullVideoPipeline {
       const segSeconds = (weights[segIdx] / totalWeight) * audioDuration;
       let remaining = segSeconds;
       let beat = 0;
+      const segWords = seg.text.split(/\s+/).filter(Boolean);
+      let wordCursor = 0;
 
       while (remaining > 0.05) {
         beat += 1;
         const dur = pickBeatDuration(remaining);
         remaining -= dur;
+
+        // Words spoken during this beat (narration is spread evenly over the segment).
+        const wordEnd = remaining > 0.05
+          ? Math.min(segWords.length, wordCursor + Math.max(1, Math.round((dur / segSeconds) * segWords.length)))
+          : segWords.length;
+        const narration = segWords.slice(wordCursor, wordEnd).join(' ');
+        wordCursor = wordEnd;
 
         const preferredType = pickType(seg.forceType);
         const searchQuery = pickQueryFromPalette(seg.baseQuery, channel.style.theme, preferredType, beat - 1);
@@ -543,7 +570,8 @@ export class FullVideoPipeline {
           durationSeconds: Math.max(0.1, dur),
           transition: seg.transition,
           searchQuery,
-          channelId: channel.id
+          channelId: channel.id,
+          narration: narration || seg.text.slice(0, 300)
         });
       }
     });

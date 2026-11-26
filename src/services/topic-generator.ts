@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { generateText, parseJsonResponse } from './claude-client.js';
 import { Channel } from '../types/index.js';
 import logger from '../utils/logger.js';
 
@@ -11,32 +11,24 @@ export interface TopicSuggestion {
 }
 
 export class TopicGenerator {
-  private client: Anthropic;
-
-  constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY || 'dummy-key-for-testing';
-    this.client = new Anthropic({ apiKey });
-  }
-
   async generateTopic(channel: Channel, previousTopics: string[] = []): Promise<string> {
     logger.info({ channelId: channel.id }, 'Generating automatic topic with Anthropic');
 
     const prompt = this.buildTopicPrompt(channel, previousTopics);
 
     try {
-      const response = await this.client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 120,
-        temperature: 0.9,
+      const raw = await generateText({
+        maxTokens: 4000,
+        effort: 'low',
         system: [
           'You are an expert YouTube content strategist.',
           'Generate compelling topics optimized for retention and search.',
           'Reply only with the topic, without quotes or extra explanation.'
         ].join(' '),
-        messages: [{ role: 'user', content: prompt }]
+        prompt
       });
 
-      const topic = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+      const topic = raw.split('\n')[0].replace(/^["'\s]+|["'\s]+$/g, '');
       if (!topic) {
         throw new Error('No topic generated');
       }
@@ -59,20 +51,18 @@ export class TopicGenerator {
     const prompt = this.buildSuggestionsPrompt(channel, count, previousTopics);
 
     try {
-      const response = await this.client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 1800,
-        temperature: 0.8,
+      const content = await generateText({
+        maxTokens: 8000,
+        effort: 'medium',
         system: [
           'You are an expert YouTube content strategist.',
           'Generate topic suggestions with viral and SEO analysis.',
           'Reply only with valid JSON.'
         ].join(' '),
-        messages: [{ role: 'user', content: prompt }]
+        prompt
       });
 
-      const content = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
-      const suggestions = JSON.parse(this.extractJson(content));
+      const suggestions = parseJsonResponse<{ topics?: TopicSuggestion[] }>(content);
       return Array.isArray(suggestions.topics) ? suggestions.topics : [];
     } catch (error) {
       logger.error({ error, channelId: channel.id }, 'Topic suggestions failed');
@@ -138,11 +128,6 @@ Reply with exactly this JSON shape:
     }
   ]
 }`;
-  }
-
-  private extractJson(content: string): string {
-    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    return (fenced ? fenced[1] : content).trim();
   }
 
   private getFallbackSuggestions(channel: Channel, count: number): TopicSuggestion[] {

@@ -53,8 +53,11 @@ export class AssetDownloader {
           source: asset.source || 'pexels'
         };
 
-        // Index into local library for future reuse
-        const entry = await this.library.upsertFromDownload(enriched, localPath).catch(() => null);
+        // Index stock footage into the local library for future reuse.
+        // AI images are episode-specific: never reuse them in another video.
+        const entry = enriched.source === 'ai'
+          ? null
+          : await this.library.upsertFromDownload(enriched, localPath).catch(() => null);
         if (entry) indexedCount++;
         
         downloadedAssets.push(enriched);
