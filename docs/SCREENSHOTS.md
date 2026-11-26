@@ -1,0 +1,148 @@
+# 📸 Captures d'Écran de l'Interface
+
+## 🏠 Page d'Accueil
+
+```
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║              🎬 ChrisStudio                                     ║
+║        AI-Powered Video Generation for Your Channels            ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────┬───────────────────────────────┐
+│    🆕 CREATE NEW VIDEO         │   📚 RECENT VIDEOS            │
+│                                │                               │
+│  Select Channel                │  ┌─────────────────────────┐ │
+│  ┌──────────────────────────┐ │  │ What If AI Became...    │ │
+│  │ What If...            ▼  │ │  │ 📺 what-if              │ │
+│  └──────────────────────────┘ │  │ 📅 Jan 13  🕐 10:30    │ │
+│                                │  │ [🎬 Video] [🎵 Audio]  │ │
+│  📺 Hypothetical scenarios and │  └─────────────────────────┘ │
+│  future possibilities          │                               │
+│                                │  ┌─────────────────────────┐ │
+│  Video Topic                   │  │ The Fall of Rome        │ │
+│  ┌──────────────────────────┐ │  │ 📺 human-odyssey        │ │
+│  │ What if humans could...  │ │  │ 📅 Jan 12  🕐 15:45    │ │
+│  └──────────────────────────┘ │  │ [🎬 Video] [📄 Script] │ │
+│  Be specific and intriguing!   │  └─────────────────────────┘ │
+│                                │                               │
+│  Generation Mode               │  📊 STATISTICS              │
+│  ┌──────────────────────────┐ │  ┌─────────────────────────┐ │
+│  │ Full Video (Script + ▼   │ │  │ Total Videos:      12   │ │
+│  └──────────────────────────┘ │  │ This Week:         3    │ │
+│                                │  │ Avg. Duration:   ~9min  │ │
+│  ┌──────────────────────────┐ │  └─────────────────────────┘ │
+│  │  🚀 Generate Video       │ │                               │
+│  └──────────────────────────┘ │  ℹ️ QUICK INFO              │
+│                                │  • Cost: $0.10-0.20/video   │
+│                                │  • Time: 7-10 minutes       │
+│                                │  • Quality: 1080p, 30fps    │
+└────────────────────────────────┴───────────────────────────────┘
+```
+
+## 🔄 En Cours de Génération
+
+```
+╔══════════════════════════════════════════════════════════════════╗
+║                   GENERATION PROGRESS                            ║
+╚══════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────────────────────────────┐
+│  Progress: ████████████████░░░░░░░░░ 75%                      │
+└────────────────────────────────────────────────────────────────┘
+
+┌─────────┬─────────┬─────────┬─────────┬─────────┐
+│ ✅ Script│ ✅ Audio │ ✅ Assets│ ⏳ Down. │   Comp. │
+└─────────┴─────────┴─────────┴─────────┴─────────┘
+
+╔══════════════════════════════════════════════════════════════════╗
+║ LIVE LOG:                                                        ║
+║ 🚀 Generation started (Job ID: 1736760000000)                   ║
+║ 📺 Channel: What If...                                           ║
+║ 📝 Topic: What if AI became conscious tomorrow?                 ║
+║ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ║
+║ 📝 STEP 1/5: Generating script with Claude AI...                ║
+║ ✅ Script generated: "What If AI Became Conscious?"             ║
+║    Duration: 9:00                                                ║
+║    Sections: 6                                                   ║
+║ 🎤 STEP 2/5: Generating narration with Edge TTS...              ║
+║ ✅ Audio generated: ./output/audio/what-if-1736760000000.mp3    ║
+║ 🎨 STEP 3/5: Collecting visual assets from Pexels...            ║
+║ [1/6] Searching: "artificial intelligence consciousness"         ║
+║ ✅ Found image: https://...                                      ║
+║ [2/6] Searching: "robot human interaction"                       ║
+║ ✅ Found video: https://...                                      ║
+║ 📥 STEP 4/5: Downloading assets...                              ║
+║ [1/6] Downloading image...                                       ║
+║ ✅ Saved: assets/downloads/image-0-1736760000000.jpg            ║
+╚══════════════════════════════════════════════════════════════════╝
+```
+
+## ✅ Génération Terminée
+
+```
+╔══════════════════════════════════════════════════════════════════╗
+║                      ✅ VIDEO READY!                             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────────────────────────────┐
+│  🎬 Video Path: /output/videos/what-if-1736760000000.mp4      │
+│  ⏱️ Generation Time: ~7-10 minutes                             │
+│  📊 Quality: 1080p, 30fps                                      │
+└────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────┬──────────────────────┐
+│  📥 Download Video   │  ➕ Create Another   │
+└──────────────────────┴──────────────────────┘
+```
+
+## 🎨 Palette de Couleurs
+
+- **Primaire:** #6366f1 (Indigo)
+- **Succès:** #10b981 (Vert)
+- **Warning:** #f59e0b (Orange)
+- **Erreur:** #ef4444 (Rouge)
+- **Background:** #0f172a (Bleu foncé)
+- **Cartes:** #1e293b (Gris-bleu)
+
+## 📱 Responsive
+
+### Desktop (>1024px)
+- Layout 2 colonnes
+- Formulaire à gauche, historique à droite
+- Toutes les fonctionnalités visibles
+
+### Tablet (768-1024px)
+- Layout ajusté
+- Colonnes réduites
+- Navigation simplifiée
+
+### Mobile (<768px)
+- Layout 1 colonne
+- Formulaire en haut
+- Historique en bas
+- Optimisé pour le tactile
+
+## 🌟 Animations
+
+- **Fade In** : Apparition des cartes
+- **Slide In** : Progression
+- **Pulse** : Étapes actives
+- **Smooth Scroll** : Logs
+- **Hover Effects** : Tous les boutons
+
+## 🎯 UX/UI Features
+
+- ✨ Dark theme moderne
+- 🎨 Badges colorés par chaîne
+- 📊 Barres de progression animées
+- 🔄 Mise à jour en temps réel
+- 📱 Design responsive
+- ⌨️ Raccourcis clavier
+- 🎭 Transitions fluides
+- 🌈 Gradients subtils
+
+---
+
+**Interface conçue pour une expérience utilisateur optimale !** ✨
