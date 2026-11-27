@@ -35,9 +35,6 @@ export class AssetCollector {
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.PEXELS_API_KEY || '';
-    if (!this.apiKey) {
-      console.warn('⚠️  No Pexels API key found. Asset collection will be limited.');
-    }
 
     this.library = new AssetLibrary();
   }
@@ -379,7 +376,18 @@ export class AssetCollector {
     };
   }
 
+  private warnedNoKey = false;
+
+  /** Pexels is only a fallback for AI images: warn when it is actually needed, not at startup. */
+  private warnIfNoKey(): void {
+    if (!this.apiKey && !this.warnedNoKey) {
+      this.warnedNoKey = true;
+      console.warn('⚠️  Pexels fallback needed but PEXELS_API_KEY is not set: these shots may get a placeholder image.');
+    }
+  }
+
   private async searchImages(query: string, count: number): Promise<Array<Omit<Asset, 'duration'>>> {
+    this.warnIfNoKey();
     if (!this.apiKey) {
       throw new Error('Pexels API key required');
     }
@@ -442,6 +450,7 @@ export class AssetCollector {
   }
 
   private async searchVideos(query: string, count: number): Promise<Array<Omit<Asset, 'duration'>>> {
+    this.warnIfNoKey();
     if (!this.apiKey) {
       throw new Error('Pexels API key required');
     }

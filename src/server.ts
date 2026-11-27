@@ -92,7 +92,9 @@ app.use(globalRateLimiter);
 app.use((req, _res, next) => {
   const requestId = crypto.randomUUID();
   (req as AuthRequest & { requestId: string }).requestId = requestId;
-  logger.info({ requestId, method: req.method, path: req.path, ip: req.ip }, 'Request received');
+  // Routine reads (page polling) at debug level; actions (POST/PUT/DELETE, OAuth) stay visible.
+  const level = req.method === 'GET' && req.path !== '/api/youtube/oauth/callback' ? 'debug' : 'info';
+  logger[level]({ requestId, method: req.method, path: req.path, ip: req.ip }, 'Request received');
   next();
 });
 
@@ -885,7 +887,7 @@ httpServer.listen(PORT, async () => {
   }
 
   logger.info('ChrisStudio ready');
-  console.log('\n Ready to create videos!\n');
+  console.log('\n Ready. Nothing is generated until you click Generate.\n');
 });
 
 export default app;
