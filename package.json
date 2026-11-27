@@ -18,7 +18,8 @@
     "generate": "tsx src/cli.ts generate",
     "generate:full": "tsx src/cli.ts full",
     "recompose": "tsx src/cli.ts recompose",
-    "voices": "tsx src/cli.ts voices"
+    "voices": "tsx src/cli.ts voices",
+    "check:keys": "tsx src/check-keys.ts"
   },
   "keywords": [
     "youtube",

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.js';
 import { ScriptGenerator } from './services/script-generator.js';
 import { VoiceGeneratorFactory } from './services/voice-generator-factory.js';
 import { VoiceGenerator } from './services/voice-generator.js';

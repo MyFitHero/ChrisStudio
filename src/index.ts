@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.js';
 
 console.log('🎬 ChrisStudio');
 console.log('📺 Multi-channel automation ready!');
