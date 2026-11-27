@@ -93,7 +93,7 @@ export class FullVideoPipeline {
 
       // Step 3: Collect Assets
       const visualSource = resolveVisualSource();
-      console.log(`🎨 STEP 3/5: Collecting visual assets (${visualSource === 'ai' ? 'AI images via fal.ai' : 'Pexels'})...\n`);
+      console.log(`🎨 STEP 3/5: Collecting visual assets (${visualSource === 'ai' ? 'AI images' : 'Pexels'})...\n`);
       const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration, {
         forceImagesOnly: visualSource === 'ai'
       });
@@ -377,7 +377,7 @@ export class FullVideoPipeline {
     return value;
   }
 
-  /** AI images when VISUAL_SOURCE resolves to "ai" (FAL_KEY set), Pexels/local library otherwise. */
+  /** AI images when VISUAL_SOURCE resolves to "ai" (KIE_API_KEY or FAL_KEY set), Pexels/local library otherwise. */
   private async collectVisuals(channel: Channel, topic: string, requests: VisualRequest[]) {
     if (resolveVisualSource() === 'ai') {
       return this.aiVisualCollector.collect(channel, topic, requests);

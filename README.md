@@ -58,8 +58,8 @@ cp .env.example .env
 # Anthropic (Claude) - Sujets, scripts, metadonnees, prompts d'images
 ANTHROPIC_API_KEY=sk-ant-...
 
-# fal.ai - Images IA (une par plan)
-FAL_KEY=...
+# kie.ai - Images IA (une par plan) ; ou FAL_KEY pour fal.ai
+KIE_API_KEY=...
 
 # Pexels (gratuit) - B-roll videos/images
 PEXELS_API_KEY=...
@@ -73,7 +73,7 @@ NODE_ENV=development
 
 **Obtenir les cles API:**
 - **Anthropic**: https://console.anthropic.com/settings/keys
-- **fal.ai**: https://fal.ai/dashboard/keys
+- **kie.ai**: https://kie.ai/api-key (ou fal.ai: https://fal.ai/dashboard/keys)
 - **Pexels** (gratuit): https://www.pexels.com/api/
 - **ElevenLabs**: https://elevenlabs.io/
 

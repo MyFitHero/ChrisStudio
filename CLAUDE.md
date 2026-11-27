@@ -10,7 +10,7 @@
 Pipeline complet Node.js/TypeScript qui génère des vidéos YouTube de A à Z :
 1. Génère un script (Claude Opus 5.5, structure 3 actes)
 2. Synthèse vocale (ElevenLabs)
-3. Génère une image IA par plan (fal.ai / Flux), Pexels en secours
+3. Génère une image IA par plan (kie.ai ou fal.ai), Pexels en secours
 4. Montage vidéo FFmpeg 1080p avec effets visuels
 5. Upload YouTube automatisé
 
@@ -39,7 +39,7 @@ Pipeline complet Node.js/TypeScript qui génère des vidéos YouTube de A à Z :
 
 ```env
 ANTHROPIC_API_KEY=     # Claude — sujets, scripts, métadonnées, prompts d'images
-FAL_KEY=               # fal.ai — génération d'images
+KIE_API_KEY=           # kie.ai — génération d'images (ou FAL_KEY pour fal.ai)
 PEXELS_API_KEY=        # B-roll gratuit
 ELEVENLABS_API_KEY=    # Synthèse vocale
 PORT=3000
@@ -71,6 +71,7 @@ src/
 │   ├── script-generator.ts         # Claude, structure 3 actes
 │   ├── ai-visual-collector.ts      # Images IA par plan (+ fallback Pexels)
 │   ├── image-prompt-writer.ts      # Narration -> prompts d'images
+│   ├── kie-image-generator.ts      # API kie.ai (createTask + polling)
 │   ├── fal-image-generator.ts      # API fal.ai
 │   ├── elevenlabs-voice-generator.ts
 │   ├── asset-collector.ts          # Pexels API

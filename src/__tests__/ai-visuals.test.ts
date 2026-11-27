@@ -3,7 +3,8 @@ import { channels } from '../config/channels.js';
 import { extractText, parseJsonResponse } from '../services/claude-client.js';
 import { FalImageGenerator } from '../services/fal-image-generator.js';
 import { ImagePromptWriter } from '../services/image-prompt-writer.js';
-import { AiVisualCollector, resolveVisualSource } from '../services/ai-visual-collector.js';
+import { AiVisualCollector, resolveImageProvider, resolveVisualSource } from '../services/ai-visual-collector.js';
+import { KieImageGenerator } from '../services/kie-image-generator.js';
 import { Asset, VisualRequest } from '../types/index.js';
 
 const channel = channels['human-odyssey'];
@@ -117,5 +118,56 @@ describe('AiVisualCollector', () => {
     ]);
     expect(assets[0]).toMatchObject({ source: 'ai', type: 'image', duration: 7, prompt: 'P0 scene' });
     expect(fallback.collectAssetsForTimeline).toHaveBeenCalledWith([beats[1]]);
+  });
+});
+
+describe('KieImageGenerator', () => {
+  const noSleep = async () => undefined;
+
+  it('creates a task, polls until success and returns the first result url', async () => {
+    const post = vi.fn(async () => ({ data: { code: 200, msg: 'success', data: { taskId: 'task_1' } } }));
+    const states = [
+      { code: 200, data: { state: 'generating' } },
+      { code: 200, data: { state: 'success', resultJson: '{"resultUrls":["https://kie/x.png"]}' } }
+    ];
+    const get = vi.fn(async () => ({ data: states.shift() }));
+    const gen = new KieImageGenerator({ apiKey: 'kie-key', http: { post, get } as any, sleep: noSleep });
+
+    await expect(gen.generate('a byzantine wall at dawn')).resolves.toBe('https://kie/x.png');
+
+    const [url, body, config] = post.mock.calls[0] as unknown as [string, any, any];
+    expect(url).toBe('https://api.kie.ai/api/v1/jobs/createTask');
+    expect(body).toEqual({
+      model: 'z-image',
+      input: { prompt: 'a byzantine wall at dawn', aspect_ratio: '16:9', nsfw_checker: true }
+    });
+    expect(config.headers.Authorization).toBe('Bearer kie-key');
+    expect((get.mock.calls[0] as any)[1].params).toEqual({ taskId: 'task_1' });
+  });
+
+  it('treats a body error code as failure even with HTTP 200 and does not retry auth errors', async () => {
+    const post = vi.fn(async () => ({ data: { code: 401, msg: 'You do not have access permissions' } }));
+    const gen = new KieImageGenerator({ apiKey: 'bad', http: { post, get: vi.fn() } as any, sleep: noSleep });
+
+    await expect(gen.generate('x')).rejects.toThrow('401');
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds resolution for flux-2 and caps z-image prompts at 1000 chars', () => {
+    expect(new KieImageGenerator({ apiKey: 'k', model: 'flux-2/pro-text-to-image' }).buildInput('p')).toMatchObject({
+      resolution: '1K',
+      aspect_ratio: '16:9'
+    });
+    const input = new KieImageGenerator({ apiKey: 'k' }).buildInput('a'.repeat(1500));
+    expect((input.prompt as string).length).toBe(1000);
+  });
+});
+
+describe('resolveImageProvider', () => {
+  it('prefers kie when its key is set, honours IMAGE_PROVIDER', () => {
+    expect(resolveImageProvider({ KIE_API_KEY: 'k', FAL_KEY: 'f' })).toBe('kie');
+    expect(resolveImageProvider({ FAL_KEY: 'f' })).toBe('fal');
+    expect(resolveImageProvider({ KIE_API_KEY: 'k', IMAGE_PROVIDER: 'fal' })).toBe('fal');
+    expect(resolveVisualSource({ KIE_API_KEY: 'k' })).toBe('ai');
   });
 });

@@ -1,30 +1,49 @@
 import { Asset, Channel, VisualRequest } from '../types/index.js';
 import { AssetCollector } from './asset-collector.js';
 import { FalImageGenerator } from './fal-image-generator.js';
+import { KieImageGenerator } from './kie-image-generator.js';
 import { ImagePromptWriter } from './image-prompt-writer.js';
 import logger from '../utils/logger.js';
 
 export type VisualSource = 'ai' | 'pexels';
+export type ImageProvider = 'kie' | 'fal';
 
-/** VISUAL_SOURCE=ai|pexels. Defaults to ai when FAL_KEY is set, pexels otherwise. */
+/** Anything that turns a prompt into an image URL. */
+export interface ImageGenerator {
+  readonly model: string;
+  generate(prompt: string): Promise<string>;
+}
+
+/** VISUAL_SOURCE=ai|pexels. Defaults to ai when KIE_API_KEY or FAL_KEY is set, pexels otherwise. */
 export function resolveVisualSource(env: NodeJS.ProcessEnv = process.env): VisualSource {
   const explicit = env.VISUAL_SOURCE?.trim().toLowerCase();
   if (explicit === 'ai' || explicit === 'pexels') return explicit;
-  return env.FAL_KEY ? 'ai' : 'pexels';
+  return env.KIE_API_KEY || env.FAL_KEY ? 'ai' : 'pexels';
+}
+
+/** IMAGE_PROVIDER=kie|fal. Defaults to kie when KIE_API_KEY is set, fal otherwise. */
+export function resolveImageProvider(env: NodeJS.ProcessEnv = process.env): ImageProvider {
+  const explicit = env.IMAGE_PROVIDER?.trim().toLowerCase();
+  if (explicit === 'kie' || explicit === 'fal') return explicit;
+  return env.KIE_API_KEY ? 'kie' : 'fal';
+}
+
+export function createImageGenerator(env: NodeJS.ProcessEnv = process.env): ImageGenerator {
+  return resolveImageProvider(env) === 'kie' ? new KieImageGenerator() : new FalImageGenerator();
 }
 
 /**
- * Generates one AI image per timeline beat. Any beat whose generation fails falls back to Pexels,
+ * Generates one AI image per timeline beat (kie.ai or fal.ai). Any beat whose generation fails falls back to Pexels,
  * so a video is always produced.
  */
 export class AiVisualCollector {
   private concurrency: number;
 
   constructor(
-    private generator: FalImageGenerator = new FalImageGenerator(),
+    private generator: ImageGenerator = createImageGenerator(),
     private promptWriter: ImagePromptWriter = new ImagePromptWriter(),
     private fallbackCollector: Pick<AssetCollector, 'collectAssetsForTimeline'> = new AssetCollector(),
-    concurrency: number = Number(process.env.FAL_CONCURRENCY) || 4
+    concurrency: number = Number(process.env.IMAGE_CONCURRENCY || process.env.FAL_CONCURRENCY) || 4
   ) {
     this.concurrency = Math.max(1, concurrency);
   }
