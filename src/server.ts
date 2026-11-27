@@ -171,7 +171,7 @@ app.get('/api/history', async (_req, res) => {
         const script = JSON.parse(content) as { title?: string };
         const timestampStr = filename.match(/\d+/)?.[0] || String(Date.now());
         const timestamp = parseInt(timestampStr, 10);
-        const channelId = filename.split('-')[0];
+        const channelId = channelKeyFromVideoPath(filename) || filename.split('-')[0];
 
         return {
           id: timestamp,

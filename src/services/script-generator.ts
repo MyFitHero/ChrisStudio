@@ -137,7 +137,7 @@ Always respond with valid JSON only, no markdown formatting.`,
     const actGuidance = THREE_ACT_GUIDANCE[channel.id as keyof typeof THREE_ACT_GUIDANCE] || THREE_ACT_GUIDANCE['what-if'];
 
     const promptBase = {
-      'what-if': `You are creating a script for "What If..." - a speculative science channel.
+      'what-if': `You are creating a script for "What If Science" - a speculative science channel.
 Topic: "${topic}"
 Tone: High-energy speculative science, like a Netflix documentary meets curiosity-driven exploration.
 Visual Style: Futuristic concepts, simulations, scientific visualizations, space, technology.`,

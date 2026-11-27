@@ -4,7 +4,7 @@ export const channels: Record<string, Channel> = {
   'what-if': {
     id: 'what-if',
     aiImageStyle: 'cinematic sci-fi concept art, photorealistic, dramatic volumetric lighting, teal and orange palette, wide-angle, highly detailed, film still',
-    name: 'What If...',
+    name: 'What If Science',
     description: 'Hypothetical scenarios and future possibilities',
     assetReuseMix: {
       evergreen: 0.6,
