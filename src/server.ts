@@ -1,3 +1,4 @@
+import './load-env.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -810,10 +811,15 @@ httpServer.listen(PORT, async () => {
   console.log(`Auth:    ${isAuthEnabled() ? 'ENABLED' : 'DISABLED (set AUTH_ENABLED=true)'}`);
   console.log('='.repeat(50));
 
-  scheduler.start();
-
-  logger.info('Generating video schedule...');
-  await scheduler.generateSchedule(4);
+  // Automatic generation spends API credits unattended: opt-in only.
+  if (process.env.AUTO_SCHEDULER === 'true') {
+    scheduler.start();
+    logger.info('Generating video schedule...');
+    await scheduler.generateSchedule(4);
+    console.log('Scheduler: ON (AUTO_SCHEDULER=true) - videos will be generated automatically');
+  } else {
+    console.log('Scheduler: OFF (set AUTO_SCHEDULER=true in .env to generate videos automatically)');
+  }
 
   logger.info('ChrisStudio ready');
   console.log('\n Ready to create videos!\n');
