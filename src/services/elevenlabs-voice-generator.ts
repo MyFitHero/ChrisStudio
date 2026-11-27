@@ -92,6 +92,9 @@ export class ElevenLabsVoiceGenerator {
           errorMessage = 'Invalid request to ElevenLabs - check voice ID and text';
         }
 
+        const detail = await readErrorDetail(error.response.data);
+        if (detail) errorMessage += ` - ElevenLabs says: ${detail}`;
+
         logger.error({ status, voiceId: voiceConfig.voiceId }, errorMessage);
         throw new Error(errorMessage);
       }
@@ -157,4 +160,33 @@ export class ElevenLabsVoiceGenerator {
       return { ok: true, remaining: 0, limit: 0 };
     }
   }
+}
+
+/** ElevenLabs error bodies arrive as a stream (responseType: 'stream'); extract their message. */
+async function readErrorDetail(data: unknown): Promise<string> {
+  try {
+    let text = '';
+    if (data && typeof (data as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function') {
+      for await (const chunk of data as AsyncIterable<Buffer | string>) text += chunk.toString();
+    } else if (typeof data === 'string') {
+      text = data;
+    } else if (data) {
+      text = JSON.stringify(data);
+    }
+    return formatElevenLabsDetail(text);
+  } catch {
+    return '';
+  }
+}
+
+export function formatElevenLabsDetail(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { detail?: { status?: string; message?: string } | string };
+    const d = parsed.detail;
+    if (typeof d === 'string') return d;
+    if (d) return [d.status, d.message].filter(Boolean).join(': ');
+  } catch {
+    // not JSON
+  }
+  return text.slice(0, 300);
 }

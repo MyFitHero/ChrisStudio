@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'fs';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
+import { formatElevenLabsDetail } from './services/elevenlabs-voice-generator.js';
 
 const systemEnv = { ...process.env };
 const envPath = '.env';
@@ -79,11 +80,20 @@ async function main() {
   const elevenKey = fileVars.ELEVENLABS_API_KEY?.trim();
   if (elevenKey) {
     try {
-      await axios.get('https://api.elevenlabs.io/v1/models', { headers: { 'xi-api-key': elevenKey }, timeout: 20_000 });
-      report('OK', 'ElevenLabs API', 'key accepted');
+      // Same call the pipeline makes (text-to-speech), on a 2-word text with the first channel voice.
+      const voiceId = 'QIhD5ivPGEoYZQDocuHI';
+      await axios.post(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+        { text: 'Key check.', model_id: fileVars.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2' },
+        { headers: { 'xi-api-key': elevenKey, 'Content-Type': 'application/json' }, timeout: 30_000, responseType: 'arraybuffer' }
+      );
+      report('OK', 'ElevenLabs API', 'key accepted, text-to-speech works');
     } catch (error) {
-      const status = (error as { response?: { status?: number } }).response?.status;
-      report('FAIL', 'ElevenLabs API', status ? `key rejected (HTTP ${status})` : `request failed: ${(error as Error).message}`);
+      const response = (error as { response?: { status?: number; data?: ArrayBuffer } }).response;
+      const detail = response?.data ? formatElevenLabsDetail(Buffer.from(response.data).toString('utf8')) : '';
+      report('FAIL', 'ElevenLabs API', response?.status
+        ? `HTTP ${response.status}${detail ? ` - ${detail}` : ''}`
+        : `request failed: ${(error as Error).message}`);
     }
   }
 
