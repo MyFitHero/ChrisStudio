@@ -11,9 +11,10 @@ import { YouTubeUploader } from './services/youtube-uploader.js';
 import { YouTubePublishStore } from './services/youtube-publish-store.js';
 import { YouTubePublishJob } from './types/youtube-publish.js';
 import { PrepublishValidator } from './services/prepublish-validator.js';
+import { YouTubeMetadataGenerator } from './services/youtube-metadata-generator.js';
 import { channels } from './config/channels.js';
 import { youtubeChannels, channelKeyFromVideoPath } from './config/youtube-channels.js';
-import { readdir, readFile } from 'fs/promises';
+import { readdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { existsSync } from 'fs';
@@ -167,8 +168,10 @@ app.get('/api/history', async (_req, res) => {
     const videos = await readdir(videosDir).catch(() => [] as string[]);
     const audios = await readdir(audioDir).catch(() => [] as string[]);
 
+    const publishJobs = await youtubePublishStore.list().catch(() => [] as YouTubePublishJob[]);
+
     const history = await Promise.all(
-      scripts.map(async (filename) => {
+      scripts.filter((f) => f.endsWith('.json')).map(async (filename) => {
         const content = await readFile(path.join(scriptsDir, filename), 'utf-8');
         const script = JSON.parse(content) as { title?: string };
         const timestampStr = filename.match(/\d+/)?.[0] || String(Date.now());
@@ -184,7 +187,18 @@ app.get('/api/history', async (_req, res) => {
           hasAudio: audios.some((a) => a.includes(timestampStr)),
           scriptPath: `/output/scripts/${filename}`,
           videoPath: videos.find((v) => v.includes(timestampStr)) ? `/output/videos/${videos.find((v) => v.includes(timestampStr))}` : null,
-          audioPath: audios.find((a) => a.includes(timestampStr)) ? `/output/audio/${audios.find((a) => a.includes(timestampStr))}` : null
+          audioPath: audios.find((a) => a.includes(timestampStr)) ? `/output/audio/${audios.find((a) => a.includes(timestampStr))}` : null,
+          projectId: filename.replace(/\.json$/, ''),
+          subtitles: {
+            en: videos.includes(`${filename.replace(/\.json$/, '')}.en.srt`) ? `/output/videos/${filename.replace(/\.json$/, '')}.en.srt` : null,
+            fr: videos.includes(`${filename.replace(/\.json$/, '')}.fr.srt`) ? `/output/videos/${filename.replace(/\.json$/, '')}.fr.srt` : null
+          },
+          youtube: (() => {
+            const job = publishJobs
+              .filter((j) => j.status === 'done' && j.videoUrl && path.basename(j.videoPath) === `${filename.replace(/\.json$/, '')}.mp4`)
+              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+            return job ? { url: job.videoUrl, privacy: job.appliedPrivacyStatus || job.request.privacyStatus, publishedAt: job.updatedAt } : null;
+          })()
         };
       })
     );
@@ -194,6 +208,38 @@ app.get('/api/history', async (_req, res) => {
     const err = error as Error;
     logger.error({ error: err.message }, 'Failed to load history');
     res.status(500).json({ error: 'Failed to load history' });
+  }
+});
+
+/** YouTube title/description/tags for a generated video (Claude), cached in output/meta/<projectId>.youtube.json. */
+app.get('/api/videos/:id/metadata', validateParams(idParamSchema), async (req, res) => {
+  const projectId = String(req.params.id);
+  if (!/^[a-z0-9-]+$/i.test(projectId)) {
+    res.status(400).json({ error: 'Invalid id' });
+    return;
+  }
+  const cachePath = `./output/meta/${projectId}.youtube.json`;
+  try {
+    if (existsSync(cachePath) && req.query.refresh !== '1') {
+      res.json(JSON.parse(await readFile(cachePath, 'utf-8')));
+      return;
+    }
+    const channelKey = channelKeyFromVideoPath(`${projectId}.mp4`);
+    const channel = channelKey ? channels[channelKey] : undefined;
+    const script = JSON.parse(await readFile(`./output/scripts/${projectId}.json`, 'utf-8'));
+    const meta = await new YouTubeMetadataGenerator().generateMetadata(script, channel?.name || '', channel?.style.theme || '');
+    const result = {
+      title: meta.title,
+      description: meta.description,
+      tags: meta.tags,
+      categoryId: channelKey ? youtubeChannels[channelKey].categoryId : '27'
+    };
+    await writeFile(cachePath, JSON.stringify(result, null, 2));
+    res.json(result);
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error({ projectId, error: err.message }, 'Failed to build YouTube metadata');
+    res.status(500).json({ error: err.message });
   }
 });
 
