@@ -114,6 +114,20 @@ async function main() {
       console.log(`\n✅ Video ready: ${recomposedPath}\n`);
       break;
 
+    case 'subtitles': {
+      // Usage: npm run subtitles <projectId>   e.g. human-odyssey-1732700000000
+      const projectId = args[1];
+      const channelKey = projectId && Object.keys(channels).sort((a, b) => b.length - a.length).find(k => projectId.startsWith(`${k}-`));
+      if (!projectId || !channelKey) {
+        console.error('❌ Usage: npm run subtitles <projectId>   (file name of the video without .mp4)');
+        process.exit(1);
+      }
+      const result = await new FullVideoPipeline().subtitlesForProject(channels[channelKey], projectId);
+      console.log(`\n✅ EN: ${result.englishPath}${result.timed ? '' : ' (estimated timing: this video was made before timed voice)'}`);
+      if (result.frenchPath) console.log(`✅ FR: ${result.frenchPath}`);
+      break;
+    }
+
     case 'voices':
       const voiceGen2 = new VoiceGenerator();
       await voiceGen2.listAvailableVoices();

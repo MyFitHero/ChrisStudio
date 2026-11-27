@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { createWriteStream } from 'fs';
-import { mkdir } from 'fs/promises';
+import { mkdir, writeFile } from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import logger from '../utils/logger.js';
 
@@ -10,6 +10,18 @@ export interface ElevenLabsVoiceConfig {
   similarityBoost?: number;
   style?: number;
   useSpeakerBoost?: boolean;
+}
+
+/** Per-character timings returned by ElevenLabs /with-timestamps. */
+export interface CharacterAlignment {
+  characters: string[];
+  character_start_times_seconds: number[];
+  character_end_times_seconds: number[];
+}
+
+/** output/audio/x.mp3 -> output/audio/x.alignment.json */
+export function alignmentPathFor(audioPath: string): string {
+  return audioPath.replace(/\.[a-z0-9]+$/i, '') + '.alignment.json';
 }
 
 export interface ElevenLabsConfig {
@@ -48,6 +60,46 @@ export class ElevenLabsVoiceGenerator {
       { voiceId: voiceConfig.voiceId, outputPath, textLength: text.length },
       'Generating audio with ElevenLabs'
     );
+
+    const voiceSettings = {
+      stability: voiceConfig.stability ?? 0.5,
+      similarity_boost: voiceConfig.similarityBoost ?? 0.75,
+      style: voiceConfig.style ?? 0,
+      use_speaker_boost: voiceConfig.useSpeakerBoost ?? true
+    };
+
+    // Preferred path: audio + per-character timings (used to build accurately timed subtitles).
+    try {
+      const response = await axios.post<{
+        audio_base64?: string;
+        alignment?: CharacterAlignment;
+      }>(
+        `${this.baseUrl}/text-to-speech/${voiceConfig.voiceId}/with-timestamps`,
+        { text, model_id: this.modelId, voice_settings: voiceSettings },
+        {
+          headers: { 'Content-Type': 'application/json', 'xi-api-key': this.apiKey },
+          timeout: 300000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        }
+      );
+      if (response.data?.audio_base64) {
+        await writeFile(outputPath, Buffer.from(response.data.audio_base64, 'base64'));
+        if (response.data.alignment) {
+          await writeFile(alignmentPathFor(outputPath), JSON.stringify(response.data.alignment));
+        }
+        logger.info({ outputPath, timed: !!response.data.alignment }, 'Audio generated successfully with ElevenLabs');
+        return outputPath;
+      }
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      // Auth / quota problems would fail the same way below: surface them now.
+      if (status === 401 || status === 429) {
+        const detail = axios.isAxiosError(error) ? formatElevenLabsDetail(JSON.stringify(error.response?.data ?? '')) : '';
+        throw new Error(`ElevenLabs API error (${status})${detail ? ` - ElevenLabs says: ${detail}` : ''}`);
+      }
+      logger.warn({ status }, 'ElevenLabs with-timestamps failed, falling back to plain audio (subtitles will be estimated)');
+    }
 
     try {
       const response = await axios({

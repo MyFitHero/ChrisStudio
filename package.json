@@ -19,7 +19,8 @@
     "generate:full": "tsx src/cli.ts full",
     "recompose": "tsx src/cli.ts recompose",
     "voices": "tsx src/cli.ts voices",
-    "check:keys": "tsx src/check-keys.ts"
+    "check:keys": "tsx src/check-keys.ts",
+    "subtitles": "tsx src/cli.ts subtitles"
   },
   "keywords": [
     "youtube",

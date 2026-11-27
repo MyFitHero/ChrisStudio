@@ -7,6 +7,7 @@ import { AssetDownloader } from '../services/asset-downloader.js';
 import { VideoComposer, ComposeOptions } from '../services/video-composer.js';
 import { Asset, Channel, VisualRequest, VideoScript } from '../types/index.js';
 import { existsSync } from 'fs';
+import { countFrenchSubtitles, frenchSubtitleLimit, generateSubtitles, SubtitleResult } from '../services/subtitle-generator.js';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -80,6 +81,7 @@ export class FullVideoPipeline {
             audioPath,
             videoPath: null,
             audioDurationSeconds: audioDuration,
+            narrationText,
             beatsPlanned: null,
             forceImagesOnly: false,
             minClipsRequested: null,
@@ -162,12 +164,22 @@ export class FullVideoPipeline {
         videoPath
       }));
 
+      // Subtitles never block a finished video.
+      const subtitles = await this.writeSubtitles(channel, topic, videoPath, audioPath, narrationText, audioDuration).catch(error => {
+        console.warn(`⚠️  Subtitles skipped: ${(error as Error).message}`);
+        return null;
+      });
+
       console.log('\n' + '='.repeat(60));
       console.log('🎉 VIDEO GENERATION COMPLETE!');
       console.log('='.repeat(60));
       console.log(`\n📄 Script:  ${scriptPath}`);
       console.log(`🎵 Audio:   ${audioPath}`);
       console.log(`🎬 Video:   ${videoPath}`);
+      if (subtitles) {
+        console.log(`💬 Subtitles EN: ${subtitles.englishPath}${subtitles.timed ? '' : ' (estimated timing)'}`);
+        if (subtitles.frenchPath) console.log(`💬 Subtitles FR: ${subtitles.frenchPath}`);
+      }
       console.log(`\n✨ Your video is ready to upload to YouTube!\n`);
 
       // Optional: Cleanup assets to save space
@@ -280,6 +292,46 @@ export class FullVideoPipeline {
     }));
 
     return videoPath;
+  }
+
+  /**
+   * English subtitles for every video; French ones for the first FRENCH_SUBTITLES_LIMIT videos
+   * of each channel (review copies so the author can follow the content).
+   */
+  private async writeSubtitles(
+    channel: Channel,
+    topic: string,
+    videoPath: string,
+    audioPath: string,
+    narrationText: string,
+    audioDuration: number,
+    forceFrench = false
+  ): Promise<SubtitleResult> {
+    const videosDir = videoPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/') || '.';
+    const already = await countFrenchSubtitles(videosDir, channel.id);
+    const french = forceFrench || already < frenchSubtitleLimit();
+    if (french) {
+      console.log(`💬 Writing EN + FR subtitles (French review copy ${already + 1}/${frenchSubtitleLimit()} for ${channel.name})...`);
+    }
+    return generateSubtitles({
+      videoPath,
+      audioPath,
+      narrationText,
+      audioDurationSeconds: audioDuration,
+      french,
+      context: `${channel.name} - ${channel.description}. Episode topic: ${topic}`
+    });
+  }
+
+  /** Subtitles for an existing project (CLI: npm run subtitles <projectId>). */
+  async subtitlesForProject(channel: Channel, projectId: string): Promise<SubtitleResult> {
+    const metaPath = `./output/meta/${projectId}.json`;
+    const manifest = existsSync(metaPath) ? JSON.parse(await readFile(metaPath, 'utf-8')) : {};
+    const script = JSON.parse(await readFile(`./output/scripts/${projectId}.json`, 'utf-8')) as VideoScript;
+    const audioPath = `./output/audio/${projectId}.mp3`;
+    const narrationText: string = manifest.narrationText || this.buildNarrationWithBranding(channel, script);
+    const audioDuration = await this.probeDurationSeconds(audioPath);
+    return this.writeSubtitles(channel, manifest.topic || script.title, `./output/videos/${projectId}.mp4`, audioPath, narrationText, audioDuration, true);
   }
 
   private async updateProjectManifest(
