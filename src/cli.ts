@@ -87,7 +87,7 @@ async function main() {
       // Usage: npm run recompose [channelId] [projectId] [topic]
       const recomposeChannelId = args[1] || 'what-if';
       const recomposeProjectId = args[2];
-      const recomposeTopic = args.slice(3).join(' ') || recomposeProjectId;
+      const recomposeTopic = args.slice(3).filter(a => a !== '--new-images').join(' ') || recomposeProjectId;
 
       if (!recomposeProjectId) {
         console.error('❌ Missing projectId. Usage: npm run recompose [channelId] [projectId] [topic]');
@@ -108,7 +108,8 @@ async function main() {
       const recomposedPath = await recomposePipeline.regenerateAssetsAndRecompose(
         recomposeChannel,
         recomposeTopic,
-        recomposeProjectId
+        recomposeProjectId,
+        { reuseExistingAssets: !args.includes('--new-images') }
       );
       console.log(`\n✅ Video ready: ${recomposedPath}\n`);
       break;

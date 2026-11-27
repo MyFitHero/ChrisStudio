@@ -5,7 +5,8 @@ import { AssetCollector } from '../services/asset-collector.js';
 import { AiVisualCollector, resolveVisualSource } from '../services/ai-visual-collector.js';
 import { AssetDownloader } from '../services/asset-downloader.js';
 import { VideoComposer, ComposeOptions } from '../services/video-composer.js';
-import { Channel, VisualRequest, VideoScript } from '../types/index.js';
+import { Asset, Channel, VisualRequest, VideoScript } from '../types/index.js';
+import { existsSync } from 'fs';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -188,7 +189,7 @@ export class FullVideoPipeline {
     channel: Channel,
     topic: string,
     projectId: string,
-    options: { forceImagesOnly?: boolean; minClipsRequested?: number } = {}
+    options: { forceImagesOnly?: boolean; minClipsRequested?: number; reuseExistingAssets?: boolean } = {}
   ): Promise<string> {
     const metaDir = './output/meta';
     const metaPath = `${metaDir}/${projectId}.json`;
@@ -201,6 +202,23 @@ export class FullVideoPipeline {
 
     await mkdir(metaDir, { recursive: true });
 
+    // Recompose from the images already on disk (no new paid generation) when possible.
+    let downloadedAssets: Asset[] | null = null;
+    if (options.reuseExistingAssets) {
+      try {
+        const manifest = JSON.parse(await readFile(metaPath, 'utf-8'));
+        const previous = (manifest.downloadedAssets || []) as Asset[];
+        const onDisk = previous.filter(a => a.localPath && existsSync(a.localPath));
+        if (onDisk.length > 0) {
+          console.log(`♻️  REGEN: Reusing ${onDisk.length}/${previous.length} assets already downloaded (no new generation)`);
+          downloadedAssets = onDisk;
+        }
+      } catch {
+        // No manifest: fall through to a fresh collection.
+      }
+    }
+
+    if (!downloadedAssets) {
     console.log('🎨 REGEN: Collecting visual assets...');
     const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration, {
       forceImagesOnly: !!options.forceImagesOnly || resolveVisualSource() === 'ai',
@@ -225,13 +243,15 @@ export class FullVideoPipeline {
     }));
 
     console.log('📥 REGEN: Downloading assets...');
-    const downloadedAssets = await this.assetDownloader.downloadAssets(assets);
+    const fresh = await this.assetDownloader.downloadAssets(assets);
+    downloadedAssets = fresh;
 
     await this.updateProjectManifest(metaPath, (curr) => ({
       ...curr,
       updatedAt: new Date().toISOString(),
-      downloadedAssets
+      downloadedAssets: fresh
     }));
+    }
 
     console.log('🎬 REGEN: Composing video with enhanced effects...');
     const composeOptions: ComposeOptions = {
