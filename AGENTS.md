@@ -8,9 +8,9 @@
 ## C'est quoi ce projet
 
 Pipeline complet Node.js/TypeScript qui génère des vidéos YouTube de A à Z :
-1. Génère un script (GPT-4o, structure 3 actes)
+1. Génère un script (Claude Opus 5.5, structure 3 actes)
 2. Synthèse vocale (ElevenLabs)
-3. Collecte des B-roll (Pexels API)
+3. Génère une image IA par plan (kie.ai ou fal.ai), Pexels en secours
 4. Montage vidéo FFmpeg 1080p avec effets visuels
 5. Upload YouTube automatisé
 
@@ -19,16 +19,16 @@ Pipeline complet Node.js/TypeScript qui génère des vidéos YouTube de A à Z :
 - `human-odyssey` — Histoire et civilisations
 - `classified-files` — Mystères et affaires non résolues
 
-**Coût estimé par vidéo :** ~0.60–1.70 EUR (ElevenLabs + OpenAI, Pexels gratuit)
+**Coût estimé par vidéo :** ~3–5 EUR (ElevenLabs + Claude + ~90 images fal.ai)
 
 ---
 
 ## Stack technique
 
 - **Backend** : Node.js 18+ + Express + TypeScript (`tsx`)
-- **Scripts IA** : GPT-4o via OpenAI SDK
+- **Scripts IA** : Claude (`claude-opus-5-5`) via `@anthropic-ai/sdk`, appels centralisés dans `src/services/claude-client.ts`
 - **Voix** : ElevenLabs (voix différente par chaîne)
-- **B-roll** : Pexels API (images + vidéos libres)
+- **Visuels** : images IA fal.ai (`ai-visual-collector.ts`), Pexels en secours ou avec `VISUAL_SOURCE=pexels`
 - **Montage** : FFmpeg (requis en PATH)
 - **Tests** : Vitest
 - **Upload** : googleapis (YouTube Data API v3)
@@ -38,7 +38,8 @@ Pipeline complet Node.js/TypeScript qui génère des vidéos YouTube de A à Z :
 ## Clés API nécessaires (`.env`)
 
 ```env
-OPENAI_API_KEY=        # GPT-4o — génération scripts
+ANTHROPIC_API_KEY=     # Claude — sujets, scripts, métadonnées, prompts d'images
+KIE_API_KEY=           # kie.ai — génération d'images (ou FAL_KEY pour fal.ai)
 PEXELS_API_KEY=        # B-roll gratuit
 ELEVENLABS_API_KEY=    # Synthèse vocale
 PORT=3000
@@ -65,14 +66,20 @@ npm test               # Vitest
 ```
 src/
 ├── config/channels.ts              # Config des 3 chaînes (voix, style, prompts)
+├── config/youtube-channels.ts      # Chaîne ChrisStudio -> ID YouTube (UC...), handle, catégorie
 ├── services/
-│   ├── script-generator.ts         # GPT-4o, structure 3 actes
+│   ├── claude-client.ts            # Client Claude partagé
+│   ├── script-generator.ts         # Claude, structure 3 actes
+│   ├── ai-visual-collector.ts      # Images IA par plan (+ fallback Pexels)
+│   ├── image-prompt-writer.ts      # Narration -> prompts d'images
+│   ├── kie-image-generator.ts      # API kie.ai (createTask + polling)
+│   ├── fal-image-generator.ts      # API fal.ai
 │   ├── elevenlabs-voice-generator.ts
 │   ├── asset-collector.ts          # Pexels API
 │   ├── video-composer.ts           # FFmpeg
 │   ├── visual-effects-engine.ts    # 8+ effets visuels
 │   ├── dynamic-pacing-engine.ts    # Pacing adaptatif 2–12s/plan
-│   ├── youtube-uploader.ts         # YouTube Data API
+│   ├── youtube-uploader.ts         # YouTube Data API (1 login par chaîne, stats)
 │   ├── video-scheduler.ts          # Planification des uploads
 │   └── ...
 ├── workflows/full-video-pipeline.ts  # Pipeline complet
@@ -86,7 +93,8 @@ src/
 
 | Fonctionnalité | Statut |
 |---|---|
-| Génération script GPT-4o | OK |
+| Génération script Claude | OK |
+| Images IA par plan (fal.ai) | OK |
 | Voix ElevenLabs | OK |
 | B-roll Pexels | OK |
 | Montage FFmpeg | OK |

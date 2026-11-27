@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.js';
 import { ScriptGenerator } from './services/script-generator.js';
 import { VoiceGeneratorFactory } from './services/voice-generator-factory.js';
 import { VoiceGenerator } from './services/voice-generator.js';
@@ -87,7 +87,7 @@ async function main() {
       // Usage: npm run recompose [channelId] [projectId] [topic]
       const recomposeChannelId = args[1] || 'what-if';
       const recomposeProjectId = args[2];
-      const recomposeTopic = args.slice(3).join(' ') || recomposeProjectId;
+      const recomposeTopic = args.slice(3).filter(a => a !== '--new-images').join(' ') || recomposeProjectId;
 
       if (!recomposeProjectId) {
         console.error('❌ Missing projectId. Usage: npm run recompose [channelId] [projectId] [topic]');
@@ -108,10 +108,25 @@ async function main() {
       const recomposedPath = await recomposePipeline.regenerateAssetsAndRecompose(
         recomposeChannel,
         recomposeTopic,
-        recomposeProjectId
+        recomposeProjectId,
+        { reuseExistingAssets: !args.includes('--new-images') }
       );
       console.log(`\n✅ Video ready: ${recomposedPath}\n`);
       break;
+
+    case 'subtitles': {
+      // Usage: npm run subtitles <projectId>   e.g. human-odyssey-1732700000000
+      const projectId = args[1];
+      const channelKey = projectId && Object.keys(channels).sort((a, b) => b.length - a.length).find(k => projectId.startsWith(`${k}-`));
+      if (!projectId || !channelKey) {
+        console.error('❌ Usage: npm run subtitles <projectId>   (file name of the video without .mp4)');
+        process.exit(1);
+      }
+      const result = await new FullVideoPipeline().subtitlesForProject(channels[channelKey], projectId);
+      console.log(`\n✅ EN: ${result.englishPath}${result.timed ? '' : ' (estimated timing: this video was made before timed voice)'}`);
+      if (result.frenchPath) console.log(`✅ FR: ${result.frenchPath}`);
+      break;
+    }
 
     case 'voices':
       const voiceGen2 = new VoiceGenerator();

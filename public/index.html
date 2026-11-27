@@ -2,257 +2,130 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#6366f1">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>ChrisStudio - Génération de vidéos IA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChrisStudio</title>
     <link rel="stylesheet" href="styles.css">
     <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
-    <nav class="navbar">
-        <div class="nav-container">
-            <div class="nav-brand">
-                <h1>ChrisStudio</h1>
+    <header class="topbar">
+        <span class="brand">ChrisStudio</span>
+        <nav class="views">
+            <a href="#studio" data-view="studio" class="active">Studio</a>
+            <a href="#calendrier" data-view="calendrier">Calendrier</a>
+        </nav>
+    </header>
+
+    <main id="view-studio" class="view">
+        <div class="layout">
+            <div class="col-main">
+                <section class="panel" id="produce">
+                    <h2>Produire</h2>
+                    <div class="field">
+                        <span class="label">Chaîne</span>
+                        <div class="segmented" id="channelPicker"></div>
+                    </div>
+                    <div class="field">
+                        <label class="label" for="topic">Sujet</label>
+                        <div class="row">
+                            <input id="topic" type="text" placeholder="Ex. The fall of Constantinople in 1453" autocomplete="off">
+                            <button class="btn" id="suggestBtn" type="button">Suggérer</button>
+                        </div>
+                        <ul class="suggestions" id="suggestions" hidden></ul>
+                    </div>
+                    <div class="row end">
+                        <span class="hint" id="produceHint"></span>
+                        <button class="btn primary" id="generateBtn" type="button">Générer la vidéo</button>
+                    </div>
+
+                    <div class="progress" id="progress" hidden>
+                        <ol class="steps" id="steps">
+                            <li data-step="script">Script et voix</li>
+                            <li data-step="images">Images</li>
+                            <li data-step="download">Téléchargement</li>
+                            <li data-step="edit">Montage</li>
+                            <li data-step="subtitles">Sous-titres</li>
+                        </ol>
+                        <p class="progress-status" id="progressStatus"></p>
+                        <details>
+                            <summary>Journal</summary>
+                            <pre class="log" id="log"></pre>
+                        </details>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>Vidéos</h2>
+                        <button class="btn ghost" id="refreshVideos" type="button">Actualiser</button>
+                    </div>
+                    <div class="table-wrap">
+                    <table class="table" id="videosTable">
+                        <thead>
+                            <tr><th>Titre</th><th>Date</th><th>Statut</th><th>Fichiers</th><th></th></tr>
+                        </thead>
+                        <tbody id="videosBody"><tr><td colspan="5" class="muted">Chargement…</td></tr></tbody>
+                    </table>
+                    </div>
+                </section>
             </div>
-            <div class="nav-links">
-                <a href="/" class="active">Générer</a>
-                <a href="/calendar.html">Calendrier</a>
-            </div>
+
+            <aside class="col-side">
+                <section class="panel">
+                    <div class="panel-head">
+                        <h2>Chaînes</h2>
+                        <button class="btn ghost" id="refreshChannels" type="button">Actualiser</button>
+                    </div>
+                    <div id="channelsList"><p class="muted">Chargement…</p></div>
+                </section>
+            </aside>
         </div>
-    </nav>
+    </main>
 
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <h1>ChrisStudio</h1>
-            <p class="subtitle">Génération automatique de vidéos documentaires</p>
-        </header>
+    <main id="view-calendrier" class="view" hidden>
+        <section class="panel">
+            <div class="panel-head">
+                <button class="btn ghost" id="prevMonth" type="button" aria-label="Mois précédent">‹</button>
+                <h2 id="monthTitle"></h2>
+                <button class="btn ghost" id="nextMonth" type="button" aria-label="Mois suivant">›</button>
+            </div>
+            <div class="legend" id="legend"></div>
+            <div class="calendar" id="calendar"></div>
+            <p class="muted small">Consultation seule : vidéos générées (contour) et vidéos présentes sur YouTube (plein).</p>
+        </section>
+    </main>
 
-        <!-- Mobile Tabs -->
-        <div class="mobile-tabs">
-            <button class="active" data-tab="generate">Générer</button>
-            <button data-tab="history">Historique</button>
-            <button data-tab="stats">Stats</button>
-        </div>
-
-        <!-- Main Content -->
-        <div class="main-content">
-            <!-- Left Panel: Generation Form -->
-            <div class="left-panel tab-content active" data-tab="generate">
-                <div class="card" id="generateCard">
-                    <h2>Créer une nouvelle vidéo</h2>
-
-                    <form id="generateForm">
-                        <div class="form-group">
-                            <label for="channel">Chaîne</label>
-                            <select id="channel" name="channel" required>
-                                <option value="">Chargement des chaînes...</option>
-                            </select>
-                            <p class="channel-description" id="channelDescription"></p>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="topic">Sujet de la vidéo</label>
-                            <div class="topic-row">
-                                <input
-                                    type="text"
-                                    id="topic"
-                                    name="topic"
-                                    placeholder="Ex: Et si les humains pouvaient respirer sous l'eau ?"
-                                    required
-                                />
-                                <button
-                                    type="button"
-                                    id="generateTopicBtn"
-                                    class="btn-secondary"
-                                    title="Générer un sujet automatiquement avec l'IA"
-                                >
-                                    ✨ IA
-                                </button>
-                            </div>
-                            <small>Soyez précis et intrigant, ou laissez l'IA générer un sujet</small>
-                        </div>
-
-                        <!-- Thumbnail Preview -->
-                        <div class="thumbnail-preview" id="thumbnailPreview">
-                            <div class="placeholder">
-                                <span>🎬</span>
-                                <p>Aperçu de la miniature</p>
-                            </div>
-                        </div>
-
-                        <!-- Production Options -->
-                        <div class="form-group">
-                            <label>Options de production</label>
-                            <div class="production-options">
-                                <div class="toggle-option">
-                                    <input type="checkbox" id="optMusic" name="enableMusic" checked>
-                                    <label for="optMusic">🎵 Musique</label>
-                                </div>
-                                <div class="toggle-option">
-                                    <input type="checkbox" id="optEffects" name="enableVisualEffects" checked>
-                                    <label for="optEffects">✨ Effets visuels</label>
-                                </div>
-                                <div class="toggle-option">
-                                    <input type="checkbox" id="optColorGrade" name="enableColorGrading" checked>
-                                    <label for="optColorGrade">🎨 Color grading</label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="mode">Mode de génération</label>
-                            <select id="mode" name="mode">
-                                <option value="full">Vidéo complète (Script + Audio + Vidéo)</option>
-                            </select>
-                        </div>
-
-                        <button type="submit" class="btn-primary" id="generateBtn">
-                            🚀 Générer la vidéo
-                        </button>
-                    </form>
-                </div>
-
-                <!-- Progress Card -->
-                <div class="card progress-card" id="progressCard" style="display: none;">
-                    <h3>Progression de la génération</h3>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="progressFill"></div>
-                    </div>
-                    <div class="progress-steps" id="progressSteps">
-                        <div class="step" data-step="script">📝 Script</div>
-                        <div class="step" data-step="audio">🎤 Audio</div>
-                        <div class="step" data-step="assets">🎨 Médias</div>
-                        <div class="step" data-step="download">📥 Téléchargement</div>
-                        <div class="step" data-step="compose">🎬 Assemblage</div>
-                    </div>
-                    <div class="progress-log" id="progressLog"></div>
-                </div>
-
-                <!-- Result Card -->
-                <div class="card result-card" id="resultCard" style="display: none;">
-                    <h3>✅ Vidéo prête !</h3>
-                    <div class="result-info" id="resultInfo"></div>
-
-                    <div class="youtube-card" id="youtubeCard">
-                        <h3>📤 Publier sur YouTube</h3>
-                        <p class="youtube-status" id="ytStatusText">Vérification de la connexion YouTube…</p>
-
-                        <div class="checks-card">
-                            <h4>✅ Vérifications automatiques</h4>
-                            <div id="ytChecks" class="checks-list">
-                                <p class="loading">Chargement des vérifications…</p>
-                            </div>
-                            <div id="ytFixActions" class="checks-actions"></div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="ytTitle">Titre</label>
-                            <input type="text" id="ytTitle" placeholder="Titre de la vidéo" />
-                        </div>
-
-                        <div class="form-group">
-                            <label for="ytDescription">Description</label>
-                            <textarea id="ytDescription" rows="5" placeholder="Description de la vidéo"></textarea>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="ytTags">Tags (séparés par des virgules)</label>
-                            <input type="text" id="ytTags" placeholder="histoire, documentaire, mystère" />
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="ytCategoryId">Catégorie</label>
-                                <select id="ytCategoryId">
-                                    <option value="22">Personnes et blogs</option>
-                                    <option value="27">Éducation</option>
-                                    <option value="28">Science et technologie</option>
-                                    <option value="24">Divertissement</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="ytPrivacy">Confidentialité</label>
-                                <select id="ytPrivacy">
-                                    <option value="unlisted" selected>Non répertoriée</option>
-                                    <option value="private">Privée</option>
-                                    <option value="public">Publique</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="result-actions">
-                            <button class="btn-secondary" id="ytConnectBtn" type="button">🔐 Connecter YouTube</button>
-                            <button class="btn-primary" id="ytPublishBtn" type="button">🚀 Publier</button>
-                        </div>
-
-                        <div class="progress-bar small" id="ytProgressBar" style="display:none; margin-top: 12px;">
-                            <div class="progress-fill" id="ytProgressFill"></div>
-                        </div>
-                        <div class="progress-log" id="ytLog" style="margin-top: 12px; max-height: 150px;"></div>
-                    </div>
-
-                    <div class="result-actions" style="margin-top: 16px;">
-                        <a href="#" class="btn-secondary" id="downloadBtn" target="_blank">
-                            📥 Télécharger
-                        </a>
-                        <button class="btn-secondary" id="newVideoBtn">
-                            ➕ Nouvelle vidéo
-                        </button>
-                    </div>
+    <dialog id="publishDialog">
+        <form method="dialog" class="dialog">
+            <div class="panel-head">
+                <h2>Publier sur YouTube</h2>
+                <button class="btn ghost" value="cancel" type="submit" aria-label="Fermer">×</button>
+            </div>
+            <p class="muted" id="publishTarget"></p>
+            <label class="label" for="pubTitle">Titre</label>
+            <input id="pubTitle" type="text" maxlength="100">
+            <label class="label" for="pubDescription">Description</label>
+            <textarea id="pubDescription" rows="7"></textarea>
+            <label class="label" for="pubTags">Tags (séparés par des virgules)</label>
+            <input id="pubTags" type="text">
+            <div class="row">
+                <div class="grow">
+                    <label class="label" for="pubPrivacy">Visibilité</label>
+                    <select id="pubPrivacy">
+                        <option value="private" selected>Privée</option>
+                        <option value="unlisted">Non répertoriée</option>
+                        <option value="public">Publique</option>
+                    </select>
                 </div>
             </div>
-
-            <!-- Right Panel: History & Stats -->
-            <div class="right-panel">
-                <!-- Stats Card (visible on mobile via tab) -->
-                <div class="card stats-card tab-content" data-tab="stats">
-                    <h3>📊 Tableau de bord</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <span class="stat-value" id="statTotal">-</span>
-                            <span class="stat-label">Total vidéos</span>
-                        </div>
-                        <div class="stat-card">
-                            <span class="stat-value" id="statWeek">-</span>
-                            <span class="stat-label">Cette semaine</span>
-                        </div>
-                        <div class="stat-card">
-                            <span class="stat-value">~11</span>
-                            <span class="stat-label">Min. moyenne</span>
-                        </div>
-                        <div class="stat-card">
-                            <span class="stat-value" id="statPublished">-</span>
-                            <span class="stat-label">Publiées</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- History Card -->
-                <div class="card tab-content" data-tab="history">
-                    <h2>Vidéos récentes</h2>
-                    <div id="historyList" class="history-list">
-                        <p class="loading">Chargement de l'historique...</p>
-                    </div>
-                </div>
-
-                <!-- Info Card -->
-                <div class="card info-card">
-                    <h3>ℹ️ Informations</h3>
-                    <ul>
-                        <li><strong>Coût par vidéo :</strong> ~0,50-1,50 €</li>
-                        <li><strong>Durée cible :</strong> 10-12 minutes</li>
-                        <li><strong>Qualité :</strong> 1080p, 30fps</li>
-                        <li><strong>Voix :</strong> ElevenLabs</li>
-                        <li><strong>Médias :</strong> Pexels (gratuit)</li>
-                    </ul>
-                </div>
+            <ul class="checks" id="pubChecks"></ul>
+            <p class="notice" id="pubNotice"></p>
+            <div class="bar" id="pubBar" hidden><div class="bar-fill" id="pubBarFill"></div></div>
+            <div class="row end">
+                <button class="btn primary" id="pubSubmit" type="button">Envoyer sur YouTube</button>
             </div>
-        </div>
-    </div>
+        </form>
+    </dialog>
 
     <script src="app.js"></script>
 </body>

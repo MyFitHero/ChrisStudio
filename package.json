@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "tsx src/server.ts",
     "server": "tsx src/server.ts",
     "server:dev": "tsx watch src/server.ts",
     "test": "vitest",
@@ -15,10 +15,12 @@
     "test:video": "tsx src/tests/test-ffmpeg.ts",
     "test:assets": "tsx src/tests/test-assets.ts",
     "test:library": "tsx src/tests/test-asset-library.ts",
-    "generate": "tsx src/cli.ts",
+    "generate": "tsx src/cli.ts generate",
     "generate:full": "tsx src/cli.ts full",
     "recompose": "tsx src/cli.ts recompose",
-    "voices": "tsx src/cli.ts voices"
+    "voices": "tsx src/cli.ts voices",
+    "check:keys": "tsx src/check-keys.ts",
+    "subtitles": "tsx src/cli.ts subtitles"
   },
   "keywords": [
     "youtube",
@@ -41,7 +43,6 @@
     "googleapis": "^144.0.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
-    "openai": "^6.16.0",
     "pino": "^10.3.0",
     "pino-pretty": "^13.1.3",
     "socket.io": "^4.8.1",

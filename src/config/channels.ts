@@ -3,7 +3,8 @@ import { Channel } from '../types/index.js';
 export const channels: Record<string, Channel> = {
   'what-if': {
     id: 'what-if',
-    name: 'What If...',
+    aiImageStyle: 'cinematic sci-fi concept art, photorealistic, dramatic volumetric lighting, teal and orange palette, wide-angle, highly detailed, film still',
+    name: 'What If Science',
     description: 'Hypothetical scenarios and future possibilities',
     assetReuseMix: {
       evergreen: 0.6,
@@ -53,6 +54,7 @@ export const channels: Record<string, Channel> = {
   },
   'human-odyssey': {
     id: 'human-odyssey',
+    aiImageStyle: 'cinematic historical documentary still, photorealistic period-accurate reconstruction, warm golden-hour light, film grain, 35mm, highly detailed',
     name: 'The Human Odyssey',
     description: 'History and civilization exploration',
     assetReuseMix: {
@@ -103,6 +105,7 @@ export const channels: Record<string, Channel> = {
   },
   'classified-files': {
     id: 'classified-files',
+    aiImageStyle: 'noir investigative documentary still, desaturated cold tones, low-key lighting, archival film grain, moody, photorealistic, highly detailed',
     name: 'Classified Files',
     description: 'Mysteries and unexplained phenomena',
     assetReuseMix: {

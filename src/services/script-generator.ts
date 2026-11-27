@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { CLAUDE_MODEL, generateText } from './claude-client.js';
 import { Channel, VideoScript, ScriptSection } from '../types/index.js';
 import logger from '../utils/logger.js';
 
@@ -94,22 +94,14 @@ const THREE_ACT_GUIDANCE = {
 };
 
 export class ScriptGenerator {
-  private client: Anthropic;
-
-  constructor() {
-    this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY || 'dummy-key-for-testing'
-    });
-  }
-
   async generateScript(channel: Channel, topic: string, options: ScriptGenerationOptions = {}): Promise<EnhancedVideoScript> {
     const prompt = this.buildEnhancedPrompt(channel, topic, options);
 
-    logger.info({ model: 'claude-haiku-4-5', topic, mode: options.mode || 'normal' }, 'Generating enhanced script');
+    logger.info({ model: CLAUDE_MODEL, topic, mode: options.mode || 'normal' }, 'Generating enhanced script');
 
-    const message = await this.client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 6000,
+    const content = await generateText({
+      maxTokens: 32000,
+      effort: 'high',
       system: [
         {
           type: 'text',
@@ -120,18 +112,8 @@ Always respond with valid JSON only, no markdown formatting.`,
           cache_control: { type: 'ephemeral' }
         }
       ],
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
+      prompt
     });
-
-    const content = message.content[0]?.type === 'text' ? message.content[0].text : '';
-    if (!content) {
-      throw new Error('No response from Claude');
-    }
 
     logger.info({ responseLength: content.length }, 'Received script response');
     return this.parseEnhancedScript(content);
@@ -155,7 +137,7 @@ Always respond with valid JSON only, no markdown formatting.`,
     const actGuidance = THREE_ACT_GUIDANCE[channel.id as keyof typeof THREE_ACT_GUIDANCE] || THREE_ACT_GUIDANCE['what-if'];
 
     const promptBase = {
-      'what-if': `You are creating a script for "What If..." - a speculative science channel.
+      'what-if': `You are creating a script for "What If Science" - a speculative science channel.
 Topic: "${topic}"
 Tone: High-energy speculative science, like a Netflix documentary meets curiosity-driven exploration.
 Visual Style: Futuristic concepts, simulations, scientific visualizations, space, technology.`,

@@ -41,8 +41,8 @@ brew install ffmpeg
 
 ```bash
 # Clone le repo
-git clone https://github.com/Toulouse790/youtube-creator-studio.git
-cd youtube-creator-studio
+git clone https://github.com/MyFitHero/ChrisStudio.git
+cd ChrisStudio
 
 # Installe les dependances
 npm install
@@ -55,8 +55,11 @@ cp .env.example .env
 ## Configuration (.env)
 
 ```env
-# OpenAI (GPT-4) - Generation de scripts
-OPENAI_API_KEY=sk-...
+# Anthropic (Claude) - Sujets, scripts, metadonnees, prompts d'images
+ANTHROPIC_API_KEY=sk-ant-...
+
+# kie.ai - Images IA (une par plan) ; ou FAL_KEY pour fal.ai
+KIE_API_KEY=...
 
 # Pexels (gratuit) - B-roll videos/images
 PEXELS_API_KEY=...
@@ -69,7 +72,8 @@ NODE_ENV=development
 ```
 
 **Obtenir les cles API:**
-- **OpenAI**: https://platform.openai.com/api-keys
+- **Anthropic**: https://console.anthropic.com/settings/keys
+- **kie.ai**: https://kie.ai/api-key (ou fal.ai: https://fal.ai/dashboard/keys)
 - **Pexels** (gratuit): https://www.pexels.com/api/
 - **ElevenLabs**: https://elevenlabs.io/
 
@@ -109,7 +113,8 @@ npm run test:video    # Test FFmpeg
 | Fonctionnalite | Statut |
 |----------------|--------|
 | Multi-chaines (3 chaines) | OK |
-| Generation de scripts IA (GPT-4o) | OK |
+| Generation de scripts IA (Claude Opus 5.5) | OK |
+| Images IA par plan (fal.ai / Flux) | OK |
 | Synthese vocale pro (ElevenLabs) | OK |
 | B-roll automatique (Pexels API) | OK |
 | Montage video (FFmpeg 1080p) | OK |
@@ -131,7 +136,7 @@ src/
 ├── config/
 │   └── channels.ts              # Configuration des chaines
 ├── services/
-│   ├── script-generator.ts      # GPT-4o (3 actes, micro-hooks)
+│   ├── script-generator.ts      # Claude (3 actes, micro-hooks)
 │   ├── voice-generator-elevenlabs.ts  # ElevenLabs TTS
 │   ├── asset-collector.ts       # Pexels API
 │   ├── video-composer.ts        # FFmpeg montage
@@ -157,7 +162,8 @@ output/
 
 ## Stack technique
 
-- **Scripts**: GPT-4o (OpenAI)
+- **Scripts**: Claude Opus 5.5 (Anthropic)
+- **Images**: Flux via fal.ai
 - **Voix**: ElevenLabs
 - **Video**: FFmpeg
 - **B-roll**: Pexels API
@@ -200,7 +206,8 @@ assets/sfx/
 ## Cout estime par video
 
 - **ElevenLabs**: ~0.50-1.50 EUR (10 min narration)
-- **OpenAI**: ~0.10-0.20 EUR (GPT-4o)
+- **Claude**: ~0.30-0.80 EUR (script + metadonnees + prompts d'images)
+- **fal.ai**: ~2-3 EUR (~90 images Flux dev a ~1 MP)
 - **Pexels**: Gratuit
 - **Total**: ~0.60-1.70 EUR/video
 

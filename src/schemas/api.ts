@@ -52,6 +52,8 @@ export const youtubeUploadSchema = z.object({
 
 export const youtubePublishSchema = z.object({
   videoPath: z.string().min(1, 'videoPath is required'),
+  /** ChrisStudio channel id (what-if, human-odyssey, classified-files). Inferred from the file name when omitted. */
+  channel: z.string().optional(),
   metadata: z.object({
     title: z.string().min(1).max(100).optional(),
     description: z.string().max(5000).optional(),

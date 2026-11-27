@@ -1,10 +1,13 @@
-import 'dotenv/config';
+import '../load-env.js';
 import { ScriptGenerator, EnhancedVideoScript } from '../services/script-generator.js';
 import { VoiceGeneratorFactory } from '../services/voice-generator-factory.js';
 import { AssetCollector } from '../services/asset-collector.js';
+import { AiVisualCollector, resolveVisualSource } from '../services/ai-visual-collector.js';
 import { AssetDownloader } from '../services/asset-downloader.js';
 import { VideoComposer, ComposeOptions } from '../services/video-composer.js';
-import { Channel, VisualRequest, VideoScript } from '../types/index.js';
+import { Asset, Channel, VisualRequest, VideoScript } from '../types/index.js';
+import { existsSync } from 'fs';
+import { countFrenchSubtitles, frenchSubtitleLimit, generateSubtitles, SubtitleResult } from '../services/subtitle-generator.js';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { promisify } from 'util';
 import { exec } from 'child_process';
@@ -16,6 +19,7 @@ export class FullVideoPipeline {
   private scriptGenerator: ScriptGenerator;
   private voiceGeneratorFactory: VoiceGeneratorFactory;
   private assetCollector: AssetCollector;
+  private aiVisualCollector: AiVisualCollector;
   private assetDownloader: AssetDownloader;
   private videoComposer: VideoComposer;
 
@@ -23,6 +27,7 @@ export class FullVideoPipeline {
     this.scriptGenerator = new ScriptGenerator();
     this.voiceGeneratorFactory = new VoiceGeneratorFactory();
     this.assetCollector = new AssetCollector();
+    this.aiVisualCollector = new AiVisualCollector(undefined, undefined, this.assetCollector);
     this.assetDownloader = new AssetDownloader();
     this.videoComposer = new VideoComposer();
   }
@@ -76,6 +81,7 @@ export class FullVideoPipeline {
             audioPath,
             videoPath: null,
             audioDurationSeconds: audioDuration,
+            narrationText,
             beatsPlanned: null,
             forceImagesOnly: false,
             minClipsRequested: null,
@@ -89,15 +95,22 @@ export class FullVideoPipeline {
       );
 
       // Step 3: Collect Assets
-      console.log('🎨 STEP 3/5: Collecting visual assets from Pexels...\n');
-      const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration);
+      const visualSource = resolveVisualSource();
+      console.log(`🎨 STEP 3/5: Collecting visual assets (${visualSource === 'ai' ? 'AI images' : 'Pexels'})...\n`);
+      const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration, {
+        forceImagesOnly: visualSource === 'ai'
+      });
       const avgBeat = requests.length > 0 ? (audioDuration / requests.length) : 0;
       console.log(`   🎞️ Beats: ${requests.length} (avg ${(avgBeat || 0).toFixed(2)}s/shot)`);
-      const assets = await this.assetCollector.collectAssetsForTimeline(requests);
+      const assets = await this.collectVisuals(channel, topic, requests);
       console.log(`   Images: ${assets.filter(a => a.type === 'image').length}`);
       console.log(`   Videos: ${assets.filter(a => a.type === 'video').length}\n`);
       const fromLibrary = assets.filter(a => a.source === 'library' && a.localPath).length;
       const fromPexels = assets.filter(a => a.source === 'pexels').length;
+      const fromAi = assets.filter(a => a.source === 'ai').length;
+      if (fromAi > 0) {
+        console.log(`   🤖 AI images: ${fromAi}`);
+      }
       if (fromLibrary > 0) {
         console.log(`   ♻️  Assets from library: ${fromLibrary}`);
       }
@@ -151,12 +164,22 @@ export class FullVideoPipeline {
         videoPath
       }));
 
+      // Subtitles never block a finished video.
+      const subtitles = await this.writeSubtitles(channel, topic, videoPath, audioPath, narrationText, audioDuration).catch(error => {
+        console.warn(`⚠️  Subtitles skipped: ${(error as Error).message}`);
+        return null;
+      });
+
       console.log('\n' + '='.repeat(60));
       console.log('🎉 VIDEO GENERATION COMPLETE!');
       console.log('='.repeat(60));
       console.log(`\n📄 Script:  ${scriptPath}`);
       console.log(`🎵 Audio:   ${audioPath}`);
       console.log(`🎬 Video:   ${videoPath}`);
+      if (subtitles) {
+        console.log(`💬 Subtitles EN: ${subtitles.englishPath}${subtitles.timed ? '' : ' (estimated timing)'}`);
+        if (subtitles.frenchPath) console.log(`💬 Subtitles FR: ${subtitles.frenchPath}`);
+      }
       console.log(`\n✨ Your video is ready to upload to YouTube!\n`);
 
       // Optional: Cleanup assets to save space
@@ -178,7 +201,7 @@ export class FullVideoPipeline {
     channel: Channel,
     topic: string,
     projectId: string,
-    options: { forceImagesOnly?: boolean; minClipsRequested?: number } = {}
+    options: { forceImagesOnly?: boolean; minClipsRequested?: number; reuseExistingAssets?: boolean } = {}
   ): Promise<string> {
     const metaDir = './output/meta';
     const metaPath = `${metaDir}/${projectId}.json`;
@@ -191,12 +214,29 @@ export class FullVideoPipeline {
 
     await mkdir(metaDir, { recursive: true });
 
+    // Recompose from the images already on disk (no new paid generation) when possible.
+    let downloadedAssets: Asset[] | null = null;
+    if (options.reuseExistingAssets) {
+      try {
+        const manifest = JSON.parse(await readFile(metaPath, 'utf-8'));
+        const previous = (manifest.downloadedAssets || []) as Asset[];
+        const onDisk = previous.filter(a => a.localPath && existsSync(a.localPath));
+        if (onDisk.length > 0) {
+          console.log(`♻️  REGEN: Reusing ${onDisk.length}/${previous.length} assets already downloaded (no new generation)`);
+          downloadedAssets = onDisk;
+        }
+      } catch {
+        // No manifest: fall through to a fresh collection.
+      }
+    }
+
+    if (!downloadedAssets) {
     console.log('🎨 REGEN: Collecting visual assets...');
     const requests = this.buildVisualTimelineRequests(channel, topic, script, audioDuration, {
-      forceImagesOnly: !!options.forceImagesOnly,
+      forceImagesOnly: !!options.forceImagesOnly || resolveVisualSource() === 'ai',
       minClipsRequested: options.minClipsRequested
     });
-    const assets = await this.assetCollector.collectAssetsForTimeline(requests);
+    const assets = await this.collectVisuals(channel, topic, requests);
 
     await this.updateProjectManifest(metaPath, (curr) => ({
       ...curr,
@@ -215,13 +255,15 @@ export class FullVideoPipeline {
     }));
 
     console.log('📥 REGEN: Downloading assets...');
-    const downloadedAssets = await this.assetDownloader.downloadAssets(assets);
+    const fresh = await this.assetDownloader.downloadAssets(assets);
+    downloadedAssets = fresh;
 
     await this.updateProjectManifest(metaPath, (curr) => ({
       ...curr,
       updatedAt: new Date().toISOString(),
-      downloadedAssets
+      downloadedAssets: fresh
     }));
+    }
 
     console.log('🎬 REGEN: Composing video with enhanced effects...');
     const composeOptions: ComposeOptions = {
@@ -250,6 +292,46 @@ export class FullVideoPipeline {
     }));
 
     return videoPath;
+  }
+
+  /**
+   * English subtitles for every video; French ones for the first FRENCH_SUBTITLES_LIMIT videos
+   * of each channel (review copies so the author can follow the content).
+   */
+  private async writeSubtitles(
+    channel: Channel,
+    topic: string,
+    videoPath: string,
+    audioPath: string,
+    narrationText: string,
+    audioDuration: number,
+    forceFrench = false
+  ): Promise<SubtitleResult> {
+    const videosDir = videoPath.replace(/\\/g, '/').split('/').slice(0, -1).join('/') || '.';
+    const already = await countFrenchSubtitles(videosDir, channel.id);
+    const french = forceFrench || already < frenchSubtitleLimit();
+    if (french) {
+      console.log(`💬 Writing EN + FR subtitles (French review copy ${already + 1}/${frenchSubtitleLimit()} for ${channel.name})...`);
+    }
+    return generateSubtitles({
+      videoPath,
+      audioPath,
+      narrationText,
+      audioDurationSeconds: audioDuration,
+      french,
+      context: `${channel.name} - ${channel.description}. Episode topic: ${topic}`
+    });
+  }
+
+  /** Subtitles for an existing project (CLI: npm run subtitles <projectId>). */
+  async subtitlesForProject(channel: Channel, projectId: string): Promise<SubtitleResult> {
+    const metaPath = `./output/meta/${projectId}.json`;
+    const manifest = existsSync(metaPath) ? JSON.parse(await readFile(metaPath, 'utf-8')) : {};
+    const script = JSON.parse(await readFile(`./output/scripts/${projectId}.json`, 'utf-8')) as VideoScript;
+    const audioPath = `./output/audio/${projectId}.mp3`;
+    const narrationText: string = manifest.narrationText || this.buildNarrationWithBranding(channel, script);
+    const audioDuration = await this.probeDurationSeconds(audioPath);
+    return this.writeSubtitles(channel, manifest.topic || script.title, `./output/videos/${projectId}.mp4`, audioPath, narrationText, audioDuration, true);
   }
 
   private async updateProjectManifest(
@@ -365,6 +447,14 @@ export class FullVideoPipeline {
       throw new Error(`Unable to determine duration via ffprobe for: ${mediaPath}`);
     }
     return value;
+  }
+
+  /** AI images when VISUAL_SOURCE resolves to "ai" (KIE_API_KEY or FAL_KEY set), Pexels/local library otherwise. */
+  private async collectVisuals(channel: Channel, topic: string, requests: VisualRequest[]) {
+    if (resolveVisualSource() === 'ai') {
+      return this.aiVisualCollector.collect(channel, topic, requests);
+    }
+    return this.assetCollector.collectAssetsForTimeline(requests);
   }
 
   private buildVisualTimelineRequests(
@@ -528,11 +618,20 @@ export class FullVideoPipeline {
       const segSeconds = (weights[segIdx] / totalWeight) * audioDuration;
       let remaining = segSeconds;
       let beat = 0;
+      const segWords = seg.text.split(/\s+/).filter(Boolean);
+      let wordCursor = 0;
 
       while (remaining > 0.05) {
         beat += 1;
         const dur = pickBeatDuration(remaining);
         remaining -= dur;
+
+        // Words spoken during this beat (narration is spread evenly over the segment).
+        const wordEnd = remaining > 0.05
+          ? Math.min(segWords.length, wordCursor + Math.max(1, Math.round((dur / segSeconds) * segWords.length)))
+          : segWords.length;
+        const narration = segWords.slice(wordCursor, wordEnd).join(' ');
+        wordCursor = wordEnd;
 
         const preferredType = pickType(seg.forceType);
         const searchQuery = pickQueryFromPalette(seg.baseQuery, channel.style.theme, preferredType, beat - 1);
@@ -543,7 +642,8 @@ export class FullVideoPipeline {
           durationSeconds: Math.max(0.1, dur),
           transition: seg.transition,
           searchQuery,
-          channelId: channel.id
+          channelId: channel.id,
+          narration: narration || seg.text.slice(0, 300)
         });
       }
     });

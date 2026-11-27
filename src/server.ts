@@ -1,3 +1,4 @@
+import './load-env.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -10,8 +11,10 @@ import { YouTubeUploader } from './services/youtube-uploader.js';
 import { YouTubePublishStore } from './services/youtube-publish-store.js';
 import { YouTubePublishJob } from './types/youtube-publish.js';
 import { PrepublishValidator } from './services/prepublish-validator.js';
+import { YouTubeMetadataGenerator } from './services/youtube-metadata-generator.js';
 import { channels } from './config/channels.js';
-import { readdir, readFile } from 'fs/promises';
+import { youtubeChannels, channelKeyFromVideoPath } from './config/youtube-channels.js';
+import { readdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { existsSync } from 'fs';
@@ -49,7 +52,19 @@ const io = new Server(httpServer, {
 
 const scheduler = new VideoScheduler();
 const schedulerDb = new SchedulerDatabase();
-const youtubeUploader = new YouTubeUploader();
+// One YouTube login per ChrisStudio channel (secrets/youtube_tokens_<channel>.json).
+const youtubeUploaders = new Map<string, YouTubeUploader>();
+function getYouTubeUploader(channelKey?: string): YouTubeUploader {
+  const key = channelKey && youtubeChannels[channelKey] ? channelKey : '';
+  let uploader = youtubeUploaders.get(key);
+  if (!uploader) {
+    uploader = key
+      ? new YouTubeUploader({ channelKey: key, expectedChannelId: youtubeChannels[key].youtubeChannelId })
+      : new YouTubeUploader();
+    youtubeUploaders.set(key, uploader);
+  }
+  return uploader;
+}
 const youtubePublishStore = new YouTubePublishStore();
 const prepublishValidator = new PrepublishValidator();
 
@@ -78,7 +93,9 @@ app.use(globalRateLimiter);
 app.use((req, _res, next) => {
   const requestId = crypto.randomUUID();
   (req as AuthRequest & { requestId: string }).requestId = requestId;
-  logger.info({ requestId, method: req.method, path: req.path, ip: req.ip }, 'Request received');
+  // Routine reads (page polling) at debug level; actions (POST/PUT/DELETE, OAuth) stay visible.
+  const level = req.method === 'GET' && req.path !== '/api/youtube/oauth/callback' ? 'debug' : 'info';
+  logger[level]({ requestId, method: req.method, path: req.path, ip: req.ip }, 'Request received');
   next();
 });
 
@@ -151,13 +168,15 @@ app.get('/api/history', async (_req, res) => {
     const videos = await readdir(videosDir).catch(() => [] as string[]);
     const audios = await readdir(audioDir).catch(() => [] as string[]);
 
+    const publishJobs = await youtubePublishStore.list().catch(() => [] as YouTubePublishJob[]);
+
     const history = await Promise.all(
-      scripts.map(async (filename) => {
+      scripts.filter((f) => f.endsWith('.json')).map(async (filename) => {
         const content = await readFile(path.join(scriptsDir, filename), 'utf-8');
         const script = JSON.parse(content) as { title?: string };
         const timestampStr = filename.match(/\d+/)?.[0] || String(Date.now());
         const timestamp = parseInt(timestampStr, 10);
-        const channelId = filename.split('-')[0];
+        const channelId = channelKeyFromVideoPath(filename) || filename.split('-')[0];
 
         return {
           id: timestamp,
@@ -168,7 +187,18 @@ app.get('/api/history', async (_req, res) => {
           hasAudio: audios.some((a) => a.includes(timestampStr)),
           scriptPath: `/output/scripts/${filename}`,
           videoPath: videos.find((v) => v.includes(timestampStr)) ? `/output/videos/${videos.find((v) => v.includes(timestampStr))}` : null,
-          audioPath: audios.find((a) => a.includes(timestampStr)) ? `/output/audio/${audios.find((a) => a.includes(timestampStr))}` : null
+          audioPath: audios.find((a) => a.includes(timestampStr)) ? `/output/audio/${audios.find((a) => a.includes(timestampStr))}` : null,
+          projectId: filename.replace(/\.json$/, ''),
+          subtitles: {
+            en: videos.includes(`${filename.replace(/\.json$/, '')}.en.srt`) ? `/output/videos/${filename.replace(/\.json$/, '')}.en.srt` : null,
+            fr: videos.includes(`${filename.replace(/\.json$/, '')}.fr.srt`) ? `/output/videos/${filename.replace(/\.json$/, '')}.fr.srt` : null
+          },
+          youtube: (() => {
+            const job = publishJobs
+              .filter((j) => j.status === 'done' && j.videoUrl && path.basename(j.videoPath) === `${filename.replace(/\.json$/, '')}.mp4`)
+              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+            return job ? { url: job.videoUrl, privacy: job.appliedPrivacyStatus || job.request.privacyStatus, publishedAt: job.updatedAt } : null;
+          })()
         };
       })
     );
@@ -178,6 +208,38 @@ app.get('/api/history', async (_req, res) => {
     const err = error as Error;
     logger.error({ error: err.message }, 'Failed to load history');
     res.status(500).json({ error: 'Failed to load history' });
+  }
+});
+
+/** YouTube title/description/tags for a generated video (Claude), cached in output/meta/<projectId>.youtube.json. */
+app.get('/api/videos/:id/metadata', validateParams(idParamSchema), async (req, res) => {
+  const projectId = String(req.params.id);
+  if (!/^[a-z0-9-]+$/i.test(projectId)) {
+    res.status(400).json({ error: 'Invalid id' });
+    return;
+  }
+  const cachePath = `./output/meta/${projectId}.youtube.json`;
+  try {
+    if (existsSync(cachePath) && req.query.refresh !== '1') {
+      res.json(JSON.parse(await readFile(cachePath, 'utf-8')));
+      return;
+    }
+    const channelKey = channelKeyFromVideoPath(`${projectId}.mp4`);
+    const channel = channelKey ? channels[channelKey] : undefined;
+    const script = JSON.parse(await readFile(`./output/scripts/${projectId}.json`, 'utf-8'));
+    const meta = await new YouTubeMetadataGenerator().generateMetadata(script, channel?.name || '', channel?.style.theme || '');
+    const result = {
+      title: meta.title,
+      description: meta.description,
+      tags: meta.tags,
+      categoryId: channelKey ? youtubeChannels[channelKey].categoryId : '27'
+    };
+    await writeFile(cachePath, JSON.stringify(result, null, 2));
+    res.json(result);
+  } catch (error: unknown) {
+    const err = error as Error;
+    logger.error({ projectId, error: err.message }, 'Failed to build YouTube metadata');
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -405,7 +467,7 @@ app.post('/api/youtube/upload', authMiddleware, uploadRateLimiter, validateBody(
         privacy: (config?.privacy as 'private' | 'unlisted' | 'public') || 'unlisted'
       };
 
-      const result = await youtubeUploader.uploadVideoResumable(
+      const result = await getYouTubeUploader(video.channelId || channelKeyFromVideoPath(localVideoPath)).uploadVideoResumable(
         localVideoPath,
         uploadConfig,
         redirectUri,
@@ -471,8 +533,9 @@ function inferChannelIdFromProjectId(projectId: string): string | null {
 
 app.post('/api/prepublish/validate', validateBody(prepublishValidateSchema), async (req, res) => {
   try {
-    const { videoPath, metadata } = req.body as {
+    const { videoPath, metadata, channel: requestedChannel } = req.body as {
       videoPath: string;
+      channel?: string;
       metadata?: { title?: string; description?: string; tags?: string[] };
     };
 
@@ -582,8 +645,9 @@ app.post('/api/prepublish/regenerate-assets', authMiddleware, generateRateLimite
 
 app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody(youtubePublishSchema), async (req: AuthRequest, res) => {
   try {
-    const { videoPath, metadata } = req.body as {
+    const { videoPath, metadata, channel: requestedChannel } = req.body as {
       videoPath: string;
+      channel?: string;
       metadata?: {
         title?: string;
         description?: string;
@@ -614,8 +678,15 @@ app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody
       return;
     }
 
+    const publishChannelKey = requestedChannel || channelKeyFromVideoPath(localVideoPath);
+    const publishUploader = getYouTubeUploader(publishChannelKey);
+    if (publishChannelKey && !(await publishUploader.getAuthStatus()).connected) {
+      res.status(409).json({ error: `YouTube channel "${publishChannelKey}" is not connected. Connect it first.` });
+      return;
+    }
+
     const publishJobId = crypto.randomUUID();
-    logger.info({ publishJobId, videoPath, user: req.user?.username }, 'Starting YouTube publish');
+    logger.info({ publishJobId, videoPath, channel: publishChannelKey, user: req.user?.username }, 'Starting YouTube publish');
     res.json({ success: true, publishJobId });
 
     const room = `yt-${publishJobId}`;
@@ -632,8 +703,8 @@ app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody
         title: metadata?.title || path.basename(localVideoPath),
         description: metadata?.description || '',
         tags: Array.isArray(metadata?.tags) ? metadata.tags : [],
-        categoryId: metadata?.categoryId || '22',
-        privacyStatus: metadata?.privacyStatus || 'unlisted'
+        categoryId: metadata?.categoryId || youtubeChannels[publishChannelKey || '']?.categoryId || '27',
+        privacyStatus: metadata?.privacyStatus || 'private'
       }
     };
     await youtubePublishStore.upsert(job);
@@ -641,7 +712,7 @@ app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody
     io.to(room).emit('yt:status', { status: 'starting', progress: 0 });
 
     try {
-      const result = await youtubeUploader.uploadVideoResumable(
+      const result = await publishUploader.uploadVideoResumable(
         localVideoPath,
         {
           title: job.request.title,
@@ -739,9 +810,10 @@ app.get('/api/youtube/publish/:id', validateParams(idParamSchema), async (req, r
   }
 });
 
-app.get('/api/youtube/status', async (_req, res) => {
+app.get('/api/youtube/status', async (req, res) => {
   try {
-    const status = await youtubeUploader.getAuthStatus();
+    const channelKey = (req.query.channel as string | undefined) || undefined;
+    const status = await getYouTubeUploader(channelKey).getAuthStatus();
     res.json(status);
   } catch (error: unknown) {
     const err = error as Error;
@@ -750,11 +822,48 @@ app.get('/api/youtube/status', async (_req, res) => {
   }
 });
 
+/** Control-center view: every channel, its login and its live YouTube numbers. */
+app.get('/api/youtube/channels', async (req, res) => {
+  const redirectUri = `${getBaseUrl(req)}/api/youtube/oauth/callback`;
+  const result = await Promise.all(
+    Object.entries(youtubeChannels).map(async ([key, target]) => {
+      const uploader = getYouTubeUploader(key);
+      const auth = await uploader.getAuthStatus().catch(() => null);
+      let stats = null;
+      let error: string | undefined;
+      if (auth?.connected) {
+        try {
+          stats = await uploader.getChannelStats(redirectUri);
+        } catch (e) {
+          error = (e as Error).message;
+        }
+      }
+      return {
+        channel: key,
+        name: channels[key]?.name,
+        handle: target.handle,
+        youtubeChannelId: target.youtubeChannelId,
+        hasCredentials: !!auth?.hasCredentials,
+        connected: !!auth?.connected,
+        stats,
+        error
+      };
+    })
+  );
+  res.json(result);
+});
+
 app.get('/api/youtube/connect', optionalAuthMiddleware, async (req, res) => {
   try {
+    const channelKey = (req.query.channel as string | undefined) || '';
+    if (channelKey && !youtubeChannels[channelKey]) {
+      res.status(400).json({ error: `Unknown channel: ${channelKey}` });
+      return;
+    }
     const redirectUri = `${getBaseUrl(req)}/api/youtube/oauth/callback`;
-    const state = crypto.randomUUID();
-    const url = await youtubeUploader.getAuthUrl(redirectUri, state);
+    // The state carries the target channel so the callback stores the login in the right slot.
+    const state = `${channelKey}.${crypto.randomUUID()}`;
+    const url = await getYouTubeUploader(channelKey).getAuthUrl(redirectUri, state);
     res.json({ url });
   } catch (error: unknown) {
     const err = error as Error;
@@ -770,10 +879,13 @@ app.get('/api/youtube/oauth/callback', async (req, res) => {
       res.status(400).send('Missing ?code');
       return;
     }
+    const state = (req.query.state as string | undefined) || '';
+    const channelKey = state.includes('.') ? state.split('.')[0] : '';
     const redirectUri = `${getBaseUrl(req)}/api/youtube/oauth/callback`;
-    await youtubeUploader.handleOAuthCallback(code, redirectUri);
-    logger.info('YouTube OAuth callback successful');
-    res.send('YouTube connected. You can close this tab and return to ChrisStudio.');
+    await getYouTubeUploader(channelKey || undefined).handleOAuthCallback(code, redirectUri);
+    logger.info({ channel: channelKey || 'default' }, 'YouTube OAuth callback successful');
+    const label = channelKey ? `${channels[channelKey]?.name} (${youtubeChannels[channelKey].handle})` : 'YouTube';
+    res.send(`${label} connected. You can close this tab and return to ChrisStudio.`);
   } catch (error: unknown) {
     const err = error as Error;
     logger.error({ error: err.message }, 'OAuth callback failed');
@@ -810,13 +922,18 @@ httpServer.listen(PORT, async () => {
   console.log(`Auth:    ${isAuthEnabled() ? 'ENABLED' : 'DISABLED (set AUTH_ENABLED=true)'}`);
   console.log('='.repeat(50));
 
-  scheduler.start();
-
-  logger.info('Generating video schedule...');
-  await scheduler.generateSchedule(4);
+  // Automatic generation spends API credits unattended: opt-in only.
+  if (process.env.AUTO_SCHEDULER === 'true') {
+    scheduler.start();
+    logger.info('Generating video schedule...');
+    await scheduler.generateSchedule(4);
+    console.log('Scheduler: ON (AUTO_SCHEDULER=true) - videos will be generated automatically');
+  } else {
+    console.log('Scheduler: OFF (set AUTO_SCHEDULER=true in .env to generate videos automatically)');
+  }
 
   logger.info('ChrisStudio ready');
-  console.log('\n Ready to create videos!\n');
+  console.log('\n Ready. Nothing is generated until you click Generate.\n');
 });
 
 export default app;

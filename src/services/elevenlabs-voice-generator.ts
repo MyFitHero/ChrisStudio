@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { createWriteStream } from 'fs';
-import { mkdir } from 'fs/promises';
+import { mkdir, writeFile } from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import logger from '../utils/logger.js';
 
@@ -10,6 +10,18 @@ export interface ElevenLabsVoiceConfig {
   similarityBoost?: number;
   style?: number;
   useSpeakerBoost?: boolean;
+}
+
+/** Per-character timings returned by ElevenLabs /with-timestamps. */
+export interface CharacterAlignment {
+  characters: string[];
+  character_start_times_seconds: number[];
+  character_end_times_seconds: number[];
+}
+
+/** output/audio/x.mp3 -> output/audio/x.alignment.json */
+export function alignmentPathFor(audioPath: string): string {
+  return audioPath.replace(/\.[a-z0-9]+$/i, '') + '.alignment.json';
 }
 
 export interface ElevenLabsConfig {
@@ -48,6 +60,46 @@ export class ElevenLabsVoiceGenerator {
       { voiceId: voiceConfig.voiceId, outputPath, textLength: text.length },
       'Generating audio with ElevenLabs'
     );
+
+    const voiceSettings = {
+      stability: voiceConfig.stability ?? 0.5,
+      similarity_boost: voiceConfig.similarityBoost ?? 0.75,
+      style: voiceConfig.style ?? 0,
+      use_speaker_boost: voiceConfig.useSpeakerBoost ?? true
+    };
+
+    // Preferred path: audio + per-character timings (used to build accurately timed subtitles).
+    try {
+      const response = await axios.post<{
+        audio_base64?: string;
+        alignment?: CharacterAlignment;
+      }>(
+        `${this.baseUrl}/text-to-speech/${voiceConfig.voiceId}/with-timestamps`,
+        { text, model_id: this.modelId, voice_settings: voiceSettings },
+        {
+          headers: { 'Content-Type': 'application/json', 'xi-api-key': this.apiKey },
+          timeout: 300000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        }
+      );
+      if (response.data?.audio_base64) {
+        await writeFile(outputPath, Buffer.from(response.data.audio_base64, 'base64'));
+        if (response.data.alignment) {
+          await writeFile(alignmentPathFor(outputPath), JSON.stringify(response.data.alignment));
+        }
+        logger.info({ outputPath, timed: !!response.data.alignment }, 'Audio generated successfully with ElevenLabs');
+        return outputPath;
+      }
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      // Auth / quota problems would fail the same way below: surface them now.
+      if (status === 401 || status === 429) {
+        const detail = axios.isAxiosError(error) ? formatElevenLabsDetail(JSON.stringify(error.response?.data ?? '')) : '';
+        throw new Error(`ElevenLabs API error (${status})${detail ? ` - ElevenLabs says: ${detail}` : ''}`);
+      }
+      logger.warn({ status }, 'ElevenLabs with-timestamps failed, falling back to plain audio (subtitles will be estimated)');
+    }
 
     try {
       const response = await axios({
@@ -91,6 +143,9 @@ export class ElevenLabsVoiceGenerator {
         } else if (status === 400) {
           errorMessage = 'Invalid request to ElevenLabs - check voice ID and text';
         }
+
+        const detail = await readErrorDetail(error.response.data);
+        if (detail) errorMessage += ` - ElevenLabs says: ${detail}`;
 
         logger.error({ status, voiceId: voiceConfig.voiceId }, errorMessage);
         throw new Error(errorMessage);
@@ -157,4 +212,33 @@ export class ElevenLabsVoiceGenerator {
       return { ok: true, remaining: 0, limit: 0 };
     }
   }
+}
+
+/** ElevenLabs error bodies arrive as a stream (responseType: 'stream'); extract their message. */
+async function readErrorDetail(data: unknown): Promise<string> {
+  try {
+    let text = '';
+    if (data && typeof (data as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function') {
+      for await (const chunk of data as AsyncIterable<Buffer | string>) text += chunk.toString();
+    } else if (typeof data === 'string') {
+      text = data;
+    } else if (data) {
+      text = JSON.stringify(data);
+    }
+    return formatElevenLabsDetail(text);
+  } catch {
+    return '';
+  }
+}
+
+export function formatElevenLabsDetail(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { detail?: { status?: string; message?: string } | string };
+    const d = parsed.detail;
+    if (typeof d === 'string') return d;
+    if (d) return [d.status, d.message].filter(Boolean).join(': ');
+  } catch {
+    // not JSON
+  }
+  return text.slice(0, 300);
 }

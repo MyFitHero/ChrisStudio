@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { generateText, parseJsonResponse } from './claude-client.js';
 import { VideoScript } from '../types/index.js';
 import axios from 'axios';
 
@@ -17,14 +17,6 @@ export interface YouTubeMetadata {
 }
 
 export class YouTubeMetadataGenerator {
-  private client: Anthropic;
-
-  constructor() {
-    this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY || 'dummy-key-for-testing'
-    });
-  }
-
   async generateMetadata(
     script: VideoScript,
     channelName: string,
@@ -102,25 +94,8 @@ Return as JSON:
   }
 }`;
 
-    const response = await this.client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 2000,
-      messages: [{
-        role: 'user',
-        content: prompt
-      }]
-    });
-
-    const content = response.content[0]?.type === 'text' ? response.content[0].text : '';
-    if (!content) {
-      throw new Error('No response from Claude');
-    }
-
-    // Extract JSON from markdown code blocks
-    const jsonMatch = content.match(/```(?:json)?\n?([\s\S]*?)\n?```/);
-    const jsonText = jsonMatch ? jsonMatch[1] : content;
-
-    const metadata = JSON.parse(jsonText);
+    const content = await generateText({ prompt, maxTokens: 8000, effort: 'medium' });
+    const metadata = parseJsonResponse<Omit<YouTubeMetadata, 'seoScore' | 'trendingKeywords'>>(content);
 
     return {
       ...metadata,

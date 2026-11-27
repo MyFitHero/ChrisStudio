@@ -9,6 +9,8 @@ export interface Channel {
   assetReuseMix?: AssetReuseMix;
   branding?: ChannelBranding;
   voice: VoiceConfig;
+  /** Visual style appended to every AI-generated image prompt (keeps a consistent look per channel). */
+  aiImageStyle?: string;
 }
 
 export type AssetCategory = 'evergreen' | 'episode_specific';
@@ -98,6 +100,8 @@ export interface VisualRequest {
   label?: string;
   /** Optional channel context for local-library scoring. */
   channelId?: string;
+  /** Narration spoken while this beat is on screen (used to write AI image prompts). */
+  narration?: string;
 }
 
 export interface Asset {
@@ -116,7 +120,9 @@ export interface Asset {
   keywords?: string[];
 
   /** Metadata used for library indexing/matching (optional). */
-  source?: 'pexels' | 'library';
+  source?: 'pexels' | 'library' | 'ai';
+  /** For AI-generated assets: the prompt that produced the image. */
+  prompt?: string;
   channelId?: string;
   searchQuery?: string;
   tags?: string[];
