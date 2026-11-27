@@ -441,9 +441,23 @@ newVideoBtn.addEventListener('click', () => {
     });
 });
 
+const YT_CHANNEL_KEYS = ['classified-files', 'human-odyssey', 'what-if'];
+const YT_DEFAULT_CATEGORY = { 'what-if': '27', 'human-odyssey': '27', 'classified-files': '24' };
+
+/** ChrisStudio channel of the current video (file name prefix), else the channel picked in the form. */
+function getCurrentChannelKey() {
+    const file = (currentVideoPath || '').split(/[\\/]/).pop() || '';
+    const fromFile = YT_CHANNEL_KEYS.find(k => file.startsWith(`${k}-`));
+    if (fromFile) return fromFile;
+    const select = document.getElementById('channel');
+    return select && YT_CHANNEL_KEYS.includes(select.value) ? select.value : '';
+}
+
 async function refreshYouTubeStatus() {
     try {
-        const resp = await fetch('/api/youtube/status');
+        const key = getCurrentChannelKey();
+        if (key && ytCategoryId && YT_DEFAULT_CATEGORY[key]) ytCategoryId.value = YT_DEFAULT_CATEGORY[key];
+        const resp = await fetch(`/api/youtube/status?channel=${encodeURIComponent(key)}`);
         const status = await resp.json();
 
         if (!status.hasCredentials) {
@@ -456,12 +470,12 @@ async function refreshYouTubeStatus() {
 
         ytConnected = !!status.connected;
         if (ytConnected) {
-            ytStatusText.textContent = '✅ YouTube connecté. Prêt à publier.';
+            ytStatusText.textContent = `✅ ${status.youtubeChannelTitle || 'YouTube'} connecté. Prêt à publier.`;
             ytConnectBtn.disabled = false;
             ytConnectBtn.textContent = '🔄 Reconnecter';
             ytPublishBtn.disabled = !currentVideoPath;
         } else {
-            ytStatusText.textContent = '🔐 Non connecté à YouTube.';
+            ytStatusText.textContent = `🔐 Chaîne ${getCurrentChannelKey() || ''} non connectée à YouTube.`;
             ytConnectBtn.disabled = false;
             ytConnectBtn.textContent = '🔐 Connecter YouTube';
             ytPublishBtn.disabled = true;
@@ -632,14 +646,14 @@ function escapeHtml(str) {
 ytConnectBtn.addEventListener('click', async () => {
     try {
         ytAddLog('🔐 Démarrage OAuth YouTube…');
-        const resp = await fetch('/api/youtube/connect');
+        const resp = await fetch(`/api/youtube/connect?channel=${encodeURIComponent(getCurrentChannelKey())}`);
         const data = await resp.json();
         if (!data.url) {
             ytAddLog('❌ Impossible d\'obtenir l\'URL OAuth.', 'error');
             return;
         }
 
-        ytAddLog('➡️ Ouverture de la page de consentement Google…');
+        ytAddLog('➡️ Ouverture de la page Google. Choisissez bien la chaîne de cette vidéo dans la liste.');
         window.open(data.url, '_blank');
         ytAddLog('Après autorisation, revenez ici et cliquez sur Publier.');
 
@@ -672,7 +686,7 @@ ytPublishBtn.addEventListener('click', async () => {
         .filter(Boolean)
         .slice(0, 50);
 
-    const categoryId = (ytCategoryId.value || '22').trim();
+    const categoryId = (ytCategoryId.value || '27').trim();
     const privacyStatus = ytPrivacy.value;
 
     if (!title) {
@@ -691,6 +705,7 @@ ytPublishBtn.addEventListener('click', async () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 videoPath: currentVideoPath,
+                channel: getCurrentChannelKey() || undefined,
                 metadata: { title, description, tags, categoryId, privacyStatus }
             })
         });
@@ -822,3 +837,65 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh history every 30 seconds
     setInterval(loadHistory, 30000);
 });
+
+
+// ---------------------------------------------------------------
+// YouTube channels panel (stats tab): logins + live numbers
+// ---------------------------------------------------------------
+const ytChannelsList = document.getElementById('ytChannelsList');
+const ytChannelsRefresh = document.getElementById('ytChannelsRefresh');
+
+function fmtNumber(n) {
+    return n === null || n === undefined ? '—' : Number(n).toLocaleString('fr-FR');
+}
+
+async function loadYouTubeChannels() {
+    if (!ytChannelsList) return;
+    try {
+        const resp = await fetch('/api/youtube/channels');
+        const rows = await resp.json();
+        ytChannelsList.innerHTML = rows.map(row => {
+            const head = `<h4>${escapeHtml(row.name || row.channel)} <small>${escapeHtml(row.handle)}</small></h4>`;
+            if (!row.hasCredentials) {
+                return `<div class="yt-channel">${head}<p>⚠️ Fichier secrets/youtube_oauth_client.json manquant.</p></div>`;
+            }
+            if (!row.connected) {
+                return `<div class="yt-channel">${head}<p>🔐 Non connectée.</p>
+                    <button class="btn-secondary yt-connect-channel" data-channel="${escapeHtml(row.channel)}" type="button">Connecter cette chaîne</button></div>`;
+            }
+            if (row.error || !row.stats) {
+                return `<div class="yt-channel">${head}<p>⚠️ ${escapeHtml(row.error || 'Statistiques indisponibles')}</p></div>`;
+            }
+            const st = row.stats;
+            const videos = (st.recentVideos || []).map(v => `
+                <tr>
+                    <td><a href="https://www.youtube.com/watch?v=${encodeURIComponent(v.videoId)}" target="_blank">${escapeHtml(v.title)}</a></td>
+                    <td>${escapeHtml(v.privacyStatus || '')}</td>
+                    <td style="text-align:right">${fmtNumber(v.views)}</td>
+                    <td style="text-align:right">${fmtNumber(v.likes)}</td>
+                    <td style="text-align:right">${fmtNumber(v.comments)}</td>
+                </tr>`).join('');
+            return `<div class="yt-channel">${head}
+                <p>👥 ${fmtNumber(st.subscribers)} abonnés · 👁️ ${fmtNumber(st.totalViews)} vues · 🎬 ${fmtNumber(st.videoCount)} vidéos</p>
+                ${videos ? `<table class="yt-videos"><thead><tr><th>Vidéo</th><th>Statut</th><th>Vues</th><th>👍</th><th>💬</th></tr></thead><tbody>${videos}</tbody></table>` : '<p>Aucune vidéo pour l\'instant.</p>'}
+            </div>`;
+        }).join('');
+    } catch (e) {
+        ytChannelsList.innerHTML = `<p>⚠️ ${escapeHtml(e.message || String(e))}</p>`;
+    }
+}
+
+if (ytChannelsList) {
+    ytChannelsList.addEventListener('click', async (event) => {
+        const btn = event.target.closest('.yt-connect-channel');
+        if (!btn) return;
+        const resp = await fetch(`/api/youtube/connect?channel=${encodeURIComponent(btn.dataset.channel)}`);
+        const data = await resp.json();
+        if (data.url) {
+            alert('Sur la page Google, choisissez la chaîne ' + btn.dataset.channel + ' dans la liste des chaînes.');
+            window.open(data.url, '_blank');
+        }
+    });
+    ytChannelsRefresh?.addEventListener('click', loadYouTubeChannels);
+    loadYouTubeChannels();
+}

@@ -12,6 +12,7 @@ import { YouTubePublishStore } from './services/youtube-publish-store.js';
 import { YouTubePublishJob } from './types/youtube-publish.js';
 import { PrepublishValidator } from './services/prepublish-validator.js';
 import { channels } from './config/channels.js';
+import { youtubeChannels, channelKeyFromVideoPath } from './config/youtube-channels.js';
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
@@ -50,7 +51,19 @@ const io = new Server(httpServer, {
 
 const scheduler = new VideoScheduler();
 const schedulerDb = new SchedulerDatabase();
-const youtubeUploader = new YouTubeUploader();
+// One YouTube login per ChrisStudio channel (secrets/youtube_tokens_<channel>.json).
+const youtubeUploaders = new Map<string, YouTubeUploader>();
+function getYouTubeUploader(channelKey?: string): YouTubeUploader {
+  const key = channelKey && youtubeChannels[channelKey] ? channelKey : '';
+  let uploader = youtubeUploaders.get(key);
+  if (!uploader) {
+    uploader = key
+      ? new YouTubeUploader({ channelKey: key, expectedChannelId: youtubeChannels[key].youtubeChannelId })
+      : new YouTubeUploader();
+    youtubeUploaders.set(key, uploader);
+  }
+  return uploader;
+}
 const youtubePublishStore = new YouTubePublishStore();
 const prepublishValidator = new PrepublishValidator();
 
@@ -406,7 +419,7 @@ app.post('/api/youtube/upload', authMiddleware, uploadRateLimiter, validateBody(
         privacy: (config?.privacy as 'private' | 'unlisted' | 'public') || 'unlisted'
       };
 
-      const result = await youtubeUploader.uploadVideoResumable(
+      const result = await getYouTubeUploader(video.channelId || channelKeyFromVideoPath(localVideoPath)).uploadVideoResumable(
         localVideoPath,
         uploadConfig,
         redirectUri,
@@ -472,8 +485,9 @@ function inferChannelIdFromProjectId(projectId: string): string | null {
 
 app.post('/api/prepublish/validate', validateBody(prepublishValidateSchema), async (req, res) => {
   try {
-    const { videoPath, metadata } = req.body as {
+    const { videoPath, metadata, channel: requestedChannel } = req.body as {
       videoPath: string;
+      channel?: string;
       metadata?: { title?: string; description?: string; tags?: string[] };
     };
 
@@ -583,8 +597,9 @@ app.post('/api/prepublish/regenerate-assets', authMiddleware, generateRateLimite
 
 app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody(youtubePublishSchema), async (req: AuthRequest, res) => {
   try {
-    const { videoPath, metadata } = req.body as {
+    const { videoPath, metadata, channel: requestedChannel } = req.body as {
       videoPath: string;
+      channel?: string;
       metadata?: {
         title?: string;
         description?: string;
@@ -615,8 +630,15 @@ app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody
       return;
     }
 
+    const publishChannelKey = requestedChannel || channelKeyFromVideoPath(localVideoPath);
+    const publishUploader = getYouTubeUploader(publishChannelKey);
+    if (publishChannelKey && !(await publishUploader.getAuthStatus()).connected) {
+      res.status(409).json({ error: `YouTube channel "${publishChannelKey}" is not connected. Connect it first.` });
+      return;
+    }
+
     const publishJobId = crypto.randomUUID();
-    logger.info({ publishJobId, videoPath, user: req.user?.username }, 'Starting YouTube publish');
+    logger.info({ publishJobId, videoPath, channel: publishChannelKey, user: req.user?.username }, 'Starting YouTube publish');
     res.json({ success: true, publishJobId });
 
     const room = `yt-${publishJobId}`;
@@ -633,8 +655,8 @@ app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody
         title: metadata?.title || path.basename(localVideoPath),
         description: metadata?.description || '',
         tags: Array.isArray(metadata?.tags) ? metadata.tags : [],
-        categoryId: metadata?.categoryId || '22',
-        privacyStatus: metadata?.privacyStatus || 'unlisted'
+        categoryId: metadata?.categoryId || youtubeChannels[publishChannelKey || '']?.categoryId || '27',
+        privacyStatus: metadata?.privacyStatus || 'private'
       }
     };
     await youtubePublishStore.upsert(job);
@@ -642,7 +664,7 @@ app.post('/api/youtube/publish', authMiddleware, uploadRateLimiter, validateBody
     io.to(room).emit('yt:status', { status: 'starting', progress: 0 });
 
     try {
-      const result = await youtubeUploader.uploadVideoResumable(
+      const result = await publishUploader.uploadVideoResumable(
         localVideoPath,
         {
           title: job.request.title,
@@ -740,9 +762,10 @@ app.get('/api/youtube/publish/:id', validateParams(idParamSchema), async (req, r
   }
 });
 
-app.get('/api/youtube/status', async (_req, res) => {
+app.get('/api/youtube/status', async (req, res) => {
   try {
-    const status = await youtubeUploader.getAuthStatus();
+    const channelKey = (req.query.channel as string | undefined) || undefined;
+    const status = await getYouTubeUploader(channelKey).getAuthStatus();
     res.json(status);
   } catch (error: unknown) {
     const err = error as Error;
@@ -751,11 +774,48 @@ app.get('/api/youtube/status', async (_req, res) => {
   }
 });
 
+/** Control-center view: every channel, its login and its live YouTube numbers. */
+app.get('/api/youtube/channels', async (req, res) => {
+  const redirectUri = `${getBaseUrl(req)}/api/youtube/oauth/callback`;
+  const result = await Promise.all(
+    Object.entries(youtubeChannels).map(async ([key, target]) => {
+      const uploader = getYouTubeUploader(key);
+      const auth = await uploader.getAuthStatus().catch(() => null);
+      let stats = null;
+      let error: string | undefined;
+      if (auth?.connected) {
+        try {
+          stats = await uploader.getChannelStats(redirectUri);
+        } catch (e) {
+          error = (e as Error).message;
+        }
+      }
+      return {
+        channel: key,
+        name: channels[key]?.name,
+        handle: target.handle,
+        youtubeChannelId: target.youtubeChannelId,
+        hasCredentials: !!auth?.hasCredentials,
+        connected: !!auth?.connected,
+        stats,
+        error
+      };
+    })
+  );
+  res.json(result);
+});
+
 app.get('/api/youtube/connect', optionalAuthMiddleware, async (req, res) => {
   try {
+    const channelKey = (req.query.channel as string | undefined) || '';
+    if (channelKey && !youtubeChannels[channelKey]) {
+      res.status(400).json({ error: `Unknown channel: ${channelKey}` });
+      return;
+    }
     const redirectUri = `${getBaseUrl(req)}/api/youtube/oauth/callback`;
-    const state = crypto.randomUUID();
-    const url = await youtubeUploader.getAuthUrl(redirectUri, state);
+    // The state carries the target channel so the callback stores the login in the right slot.
+    const state = `${channelKey}.${crypto.randomUUID()}`;
+    const url = await getYouTubeUploader(channelKey).getAuthUrl(redirectUri, state);
     res.json({ url });
   } catch (error: unknown) {
     const err = error as Error;
@@ -771,10 +831,13 @@ app.get('/api/youtube/oauth/callback', async (req, res) => {
       res.status(400).send('Missing ?code');
       return;
     }
+    const state = (req.query.state as string | undefined) || '';
+    const channelKey = state.includes('.') ? state.split('.')[0] : '';
     const redirectUri = `${getBaseUrl(req)}/api/youtube/oauth/callback`;
-    await youtubeUploader.handleOAuthCallback(code, redirectUri);
-    logger.info('YouTube OAuth callback successful');
-    res.send('YouTube connected. You can close this tab and return to ChrisStudio.');
+    await getYouTubeUploader(channelKey || undefined).handleOAuthCallback(code, redirectUri);
+    logger.info({ channel: channelKey || 'default' }, 'YouTube OAuth callback successful');
+    const label = channelKey ? `${channels[channelKey]?.name} (${youtubeChannels[channelKey].handle})` : 'YouTube';
+    res.send(`${label} connected. You can close this tab and return to ChrisStudio.`);
   } catch (error: unknown) {
     const err = error as Error;
     logger.error({ error: err.message }, 'OAuth callback failed');

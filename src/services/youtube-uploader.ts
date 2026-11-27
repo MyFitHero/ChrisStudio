@@ -10,6 +10,27 @@ export type YouTubeAuthStatus = {
   hasCredentials: boolean;
   connected: boolean;
   tokensPath: string;
+  channelKey?: string;
+  /** YouTube channel the stored login belongs to. */
+  youtubeChannelId?: string;
+  youtubeChannelTitle?: string;
+};
+
+export type YouTubeChannelStats = {
+  youtubeChannelId: string;
+  title: string;
+  subscribers: number | null;
+  totalViews: number;
+  videoCount: number;
+  recentVideos: Array<{
+    videoId: string;
+    title: string;
+    publishedAt: string;
+    privacyStatus?: string;
+    views: number;
+    likes: number;
+    comments: number;
+  }>;
 };
 
 export type YouTubeUploadResult = {
@@ -22,6 +43,8 @@ export type YouTubeUploadResult = {
 };
 
 type StoredTokens = {
+  /** Channel bound to this login (written by ChrisStudio, not by Google). */
+  channel?: { id: string; title: string };
   refresh_token?: string;
   access_token?: string;
   scope?: string;
@@ -35,7 +58,17 @@ type OAuthClientCredentials = {
   redirect_uris?: string[];
 };
 
-const YT_UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+const YT_SCOPES = [
+  'https://www.googleapis.com/auth/youtube.upload',
+  'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/yt-analytics.readonly'
+];
+
+/** Extra upload settings applied to every video (Studio upload defaults do not apply to the API). */
+export type YouTubeUploadExtras = {
+  defaultLanguage?: string;
+  containsSyntheticMedia?: boolean;
+};
 
 export class YouTubeUploader {
   private oauth2Client: ReturnType<typeof this.createOAuthClient> | null = null;
@@ -43,10 +76,22 @@ export class YouTubeUploader {
 
   private credentialsPath: string;
   private tokensPath: string;
+  readonly channelKey?: string;
+  private expectedChannelId?: string;
 
-  constructor(config?: { credentialsPath?: string; tokensPath?: string }) {
+  /**
+   * channelKey: ChrisStudio channel id. Each channel gets its own login stored in
+   * secrets/youtube_tokens_<channelKey>.json. expectedChannelId (UC...) guards against
+   * authorizing the wrong channel on Google's account picker.
+   */
+  constructor(config?: { credentialsPath?: string; tokensPath?: string; channelKey?: string; expectedChannelId?: string }) {
     this.credentialsPath = config?.credentialsPath || process.env.YOUTUBE_OAUTH_CLIENT_PATH || './secrets/youtube_oauth_client.json';
-    this.tokensPath = config?.tokensPath || process.env.YOUTUBE_TOKENS_PATH || './secrets/youtube_tokens.json';
+    this.channelKey = config?.channelKey;
+    this.expectedChannelId = config?.expectedChannelId;
+    this.tokensPath = config?.tokensPath
+      || (config?.channelKey ? `./secrets/youtube_tokens_${config.channelKey}.json` : undefined)
+      || process.env.YOUTUBE_TOKENS_PATH
+      || './secrets/youtube_tokens.json';
   }
 
   getTokensPath(): string {
@@ -58,7 +103,14 @@ export class YouTubeUploader {
     const hasCredentials = !!creds;
     const tokens = await this.loadTokens().catch(() => null);
     const connected = !!tokens?.refresh_token;
-    return { hasCredentials, connected, tokensPath: this.tokensPath };
+    return {
+      hasCredentials,
+      connected,
+      tokensPath: this.tokensPath,
+      channelKey: this.channelKey,
+      youtubeChannelId: tokens?.channel?.id,
+      youtubeChannelTitle: tokens?.channel?.title
+    };
   }
 
   /** Ensure OAuth client is created and tokens are loaded (refresh token required). */
@@ -87,7 +139,7 @@ export class YouTubeUploader {
       access_type: 'offline',
       // prompt=consent helps ensure we receive refresh_token on repeat authorizations.
       prompt: 'consent',
-      scope: [YT_UPLOAD_SCOPE],
+      scope: YT_SCOPES,
       state
     });
   }
@@ -97,14 +149,66 @@ export class YouTubeUploader {
     const creds = await this.loadClientCredentials();
     const client = this.createOAuthClient(creds, redirectUri);
     const { tokens } = await client.getToken(code);
+    client.setCredentials(tokens);
+    const youtube = google.youtube({ version: 'v3', auth: client });
+
+    // Which channel did the user pick on Google's screen? Refuse to store a login for the wrong one.
+    const me = await youtube.channels.list({ part: ['id', 'snippet'], mine: true });
+    const channel = me.data.items?.[0];
+    if (!channel?.id) {
+      throw new Error('This Google login has no YouTube channel.');
+    }
+    if (this.expectedChannelId && channel.id !== this.expectedChannelId) {
+      throw new Error(
+        `WRONG_CHANNEL: you authorized "${channel.snippet?.title}" (${channel.id}) but this slot is for ${this.expectedChannelId}. ` +
+        'Connect again and pick the right channel on the Google screen.'
+      );
+    }
 
     // Never log token content.
-    await this.saveTokens(tokens as StoredTokens);
+    await this.saveTokens({ ...(tokens as StoredTokens), channel: { id: channel.id, title: channel.snippet?.title || '' } });
 
-    // Keep client ready for subsequent calls.
     this.oauth2Client = client;
-    this.oauth2Client.setCredentials(tokens);
-    this.youtube = google.youtube({ version: 'v3', auth: this.oauth2Client });
+    this.youtube = youtube;
+  }
+
+  /** Channel totals + the latest uploads with their view/like/comment counts (YouTube Data API, ~3 quota units). */
+  async getChannelStats(redirectUri: string, maxVideos = 15): Promise<YouTubeChannelStats> {
+    await this.ensureAuth(redirectUri);
+    const youtube = this.youtube!;
+
+    const ch = await youtube.channels.list({ part: ['snippet', 'statistics', 'contentDetails'], mine: true });
+    const channel = ch.data.items?.[0];
+    if (!channel?.id) throw new Error('No channel for this login');
+
+    const uploads = channel.contentDetails?.relatedPlaylists?.uploads;
+    let recentVideos: YouTubeChannelStats['recentVideos'] = [];
+    if (uploads) {
+      const items = await youtube.playlistItems.list({ part: ['contentDetails'], playlistId: uploads, maxResults: maxVideos });
+      const ids = (items.data.items || []).map(i => i.contentDetails?.videoId).filter((id): id is string => !!id);
+      if (ids.length) {
+        const vids = await youtube.videos.list({ part: ['snippet', 'statistics', 'status'], id: ids });
+        recentVideos = (vids.data.items || []).map(v => ({
+          videoId: v.id || '',
+          title: v.snippet?.title || '',
+          publishedAt: v.snippet?.publishedAt || '',
+          privacyStatus: v.status?.privacyStatus || undefined,
+          views: Number(v.statistics?.viewCount || 0),
+          likes: Number(v.statistics?.likeCount || 0),
+          comments: Number(v.statistics?.commentCount || 0)
+        }));
+      }
+    }
+
+    const stats = channel.statistics;
+    return {
+      youtubeChannelId: channel.id,
+      title: channel.snippet?.title || '',
+      subscribers: stats?.hiddenSubscriberCount ? null : Number(stats?.subscriberCount || 0),
+      totalViews: Number(stats?.viewCount || 0),
+      videoCount: Number(stats?.videoCount || 0),
+      recentVideos
+    };
   }
 
   /** Robust resumable upload with progress + basic resume/retry. */
@@ -130,7 +234,10 @@ export class YouTubeUploader {
     onProgress?.(0, 'starting');
 
     const accessToken = await this.getFreshAccessToken();
-    const uploadUrl = await this.startResumableSession(accessToken, config);
+    const { uploadUrl, syntheticDeclared } = await this.startResumableSession(accessToken, config, {
+      defaultLanguage: 'en',
+      containsSyntheticMedia: process.env.YOUTUBE_DECLARE_SYNTHETIC !== 'false'
+    });
 
     onProgress?.(0, 'uploading');
 
@@ -164,6 +271,11 @@ export class YouTubeUploader {
       warning = 'Your API project may be restricted to Private uploads until YouTube API audit/verification.';
     } else if (config.privacy !== 'private' && !appliedPrivacyStatus) {
       warning = 'PrivacyStatus may be forced to Private by YouTube until API project audit/verification.';
+    }
+
+    if (!syntheticDeclared) {
+      const aiNote = 'AI disclosure was NOT sent: in YouTube Studio, open this video > Details > "Altered or synthetic content" and answer Yes.';
+      warning = warning ? `${warning} ${aiNote}` : aiNote;
     }
 
     onProgress?.(100, 'done');
@@ -254,24 +366,53 @@ export class YouTubeUploader {
     return Math.floor(raw / unit) * unit;
   }
 
-  private async startResumableSession(accessToken: string, config: YouTubeConfig): Promise<string> {
+  /** Body of videos.insert: Studio "upload defaults" do not apply to API uploads, so everything is explicit. */
+  buildVideoResource(config: YouTubeConfig, extras: YouTubeUploadExtras = {}) {
+    const lang = extras.defaultLanguage;
+    return {
+      snippet: {
+        title: config.title,
+        description: config.description,
+        tags: config.tags,
+        categoryId: config.category,
+        ...(lang ? { defaultLanguage: lang, defaultAudioLanguage: lang } : {})
+      },
+      status: {
+        privacyStatus: config.privacy,
+        publishAt: config.scheduledPublishTime?.toISOString(),
+        selfDeclaredMadeForKids: false,
+        embeddable: true,
+        // YouTube "altered or synthetic content" disclosure (realistic AI visuals).
+        ...(extras.containsSyntheticMedia ? { containsSyntheticMedia: true } : {})
+      }
+    };
+  }
+
+  private async startResumableSession(
+    accessToken: string,
+    config: YouTubeConfig,
+    extras: YouTubeUploadExtras = {}
+  ): Promise<{ uploadUrl: string; syntheticDeclared: boolean }> {
+    try {
+      const uploadUrl = await this.postResumableSession(accessToken, this.buildVideoResource(config, extras));
+      return { uploadUrl, syntheticDeclared: !!extras.containsSyntheticMedia };
+    } catch (error) {
+      // If this API revision rejects the synthetic-media field, retry without it rather than failing the upload.
+      const body = JSON.stringify((error as AxiosError).response?.data ?? '');
+      if (extras.containsSyntheticMedia && (error as AxiosError).response?.status === 400 && body.includes('containsSyntheticMedia')) {
+        const uploadUrl = await this.postResumableSession(accessToken, this.buildVideoResource(config, { ...extras, containsSyntheticMedia: false }));
+        return { uploadUrl, syntheticDeclared: false };
+      }
+      throw error;
+    }
+  }
+
+  private async postResumableSession(accessToken: string, resource: object): Promise<string> {
     const url = 'https://www.googleapis.com/upload/youtube/v3/videos';
 
     const response = await axios.post(
       url,
-      {
-        snippet: {
-          title: config.title,
-          description: config.description,
-          tags: config.tags,
-          categoryId: config.category
-        },
-        status: {
-          privacyStatus: config.privacy,
-          publishAt: config.scheduledPublishTime?.toISOString(),
-          selfDeclaredMadeForKids: false
-        }
-      },
+      resource,
       {
         params: {
           uploadType: 'resumable',

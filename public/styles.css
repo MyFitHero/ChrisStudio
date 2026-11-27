@@ -929,3 +929,12 @@ body {
         width: 100%;
     }
 }
+
+/* YouTube channels panel */
+.yt-channel { padding: 12px 0; border-bottom: 1px solid rgba(127,127,127,.2); }
+.yt-channel:last-child { border-bottom: none; }
+.yt-channel h4 { margin: 0 0 6px; }
+.yt-channel small { opacity: .7; font-weight: normal; }
+.yt-videos { width: 100%; border-collapse: collapse; font-size: .85em; margin-top: 8px; }
+.yt-videos th, .yt-videos td { padding: 4px 6px; border-bottom: 1px solid rgba(127,127,127,.15); text-align: left; }
+.yt-videos td a { color: inherit; }

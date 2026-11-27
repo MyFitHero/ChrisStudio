@@ -177,8 +177,8 @@
                             <div class="form-group">
                                 <label for="ytPrivacy">Confidentialité</label>
                                 <select id="ytPrivacy">
-                                    <option value="unlisted" selected>Non répertoriée</option>
-                                    <option value="private">Privée</option>
+                                    <option value="private" selected>Privée</option>
+                                    <option value="unlisted">Non répertoriée</option>
                                     <option value="public">Publique</option>
                                 </select>
                             </div>
@@ -229,6 +229,13 @@
                             <span class="stat-label">Publiées</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- YouTube channels: logins + live numbers -->
+                <div class="card tab-content" data-tab="stats" id="ytChannelsCard">
+                    <h3>📺 Chaînes YouTube</h3>
+                    <div id="ytChannelsList"><p class="loading">Chargement…</p></div>
+                    <button class="btn-secondary" id="ytChannelsRefresh" type="button" style="margin-top: 12px;">🔄 Actualiser</button>
                 </div>
 
                 <!-- History Card -->

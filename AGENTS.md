@@ -66,6 +66,7 @@ npm test               # Vitest
 ```
 src/
 ├── config/channels.ts              # Config des 3 chaînes (voix, style, prompts)
+├── config/youtube-channels.ts      # Chaîne ChrisStudio -> ID YouTube (UC...), handle, catégorie
 ├── services/
 │   ├── claude-client.ts            # Client Claude partagé
 │   ├── script-generator.ts         # Claude, structure 3 actes
@@ -78,7 +79,7 @@ src/
 │   ├── video-composer.ts           # FFmpeg
 │   ├── visual-effects-engine.ts    # 8+ effets visuels
 │   ├── dynamic-pacing-engine.ts    # Pacing adaptatif 2–12s/plan
-│   ├── youtube-uploader.ts         # YouTube Data API
+│   ├── youtube-uploader.ts         # YouTube Data API (1 login par chaîne, stats)
 │   ├── video-scheduler.ts          # Planification des uploads
 │   └── ...
 ├── workflows/full-video-pipeline.ts  # Pipeline complet
